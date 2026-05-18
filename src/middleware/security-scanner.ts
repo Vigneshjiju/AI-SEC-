@@ -7,14 +7,14 @@ const POISONING_PATTERNS = [
   { pattern: /\b(instead|actually|secretly|silently|quietly)\s+(send|transmit|exfiltrate|upload|post|forward)/i, id: "poison-exfil" },
   { pattern: /\bignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|context|rules?)/i, id: "poison-hijack" },
   { pattern: /\byou\s+(are|must|should|will)\s+(now|actually|really)/i, id: "poison-role" },
-  { pattern: /<!--[\s\S]*?-->/g, id: "poison-hidden-html" },
-  { pattern: /\u200b|\u200c|\u200d|\ufeff|\u00ad/g, id: "poison-invisible" },
+  { pattern: /<!--[\s\S]*?-->/, id: "poison-hidden-html" },
+  { pattern: /\u200b|\u200c|\u200d|\ufeff|\u00ad/, id: "poison-invisible" },
 
   // --- New: URL exfiltration ---
-  { pattern: /\b(https?|wss?):\/\/[^\s"'`<>\])}]+/gi, id: "poison-url-exfil" },
+  { pattern: /\b(https?|wss?):\/\/[^\s"'`<>\])}]+/i, id: "poison-url-exfil" },
 
   // --- New: Data URI abuse ---
-  { pattern: /data:(text\/html|application\/(?:javascript|x-javascript|ecmascript))[;,]/gi, id: "poison-data-uri" },
+  { pattern: /data:(text\/html|application\/(?:javascript|x-javascript|ecmascript))[;,]/i, id: "poison-data-uri" },
 
   // --- New: Environment variable leaking ---
   { pattern: /\b(process\.env|os\.environ|os\.getenv)\b/i, id: "poison-env-leak" },
@@ -164,7 +164,7 @@ export function scanMcpServerConfig(config: unknown): SecurityFinding[] {
         if (typeof envValue !== "string") continue;
 
         const keyLower = envKey.toLowerCase();
-        const isSecretKey = /\b(secret|token|key|password|passwd|credential|auth|apikey|api_key)\b/i.test(envKey);
+        const isSecretKey = /(secret|token|key|password|passwd|credential|auth|apikey|api[_-]?key)/i.test(envKey);
 
         if (isSecretKey) {
           // If the value looks like a literal secret (not an env var reference)
