@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AuditEntry, AuditConfig } from "../types/index.js";
+import { redactSecrets } from "../reporting/redaction.js";
 
 export class AuditLogger {
   private logPath: string;
@@ -69,32 +70,4 @@ export class AuditLogger {
     ];
     return lines.join("\n");
   }
-}
-
-function redactSecrets(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(redactSecrets);
-  if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
-      if (isSecretKey(key)) {
-        result[key] = "[REDACTED]";
-      } else {
-        result[key] = redactSecrets(nestedValue);
-      }
-    }
-    return result;
-  }
-  if (typeof value === "string" && looksLikeSecret(value)) {
-    return "[REDACTED]";
-  }
-  return value;
-}
-
-function isSecretKey(key: string): boolean {
-  return /token|secret|password|passwd|api[_-]?key|authorization|credential/i.test(key);
-}
-
-function looksLikeSecret(value: string): boolean {
-  return /\b(sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/.test(value);
 }
