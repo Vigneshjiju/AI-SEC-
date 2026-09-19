@@ -3,557 +3,1060 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>mcp-gateway</title>
+<title>MCP-Sentinel — Adaptive Security Control Plane for MCP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --surface-0: oklch(12% 0.008 250);
-  --surface-1: oklch(16% 0.008 250);
-  --surface-2: oklch(20% 0.008 250);
-  --surface-3: oklch(24% 0.01 250);
-  --text-primary: oklch(92% 0.005 250);
-  --text-secondary: oklch(65% 0.01 250);
-  --text-muted: oklch(50% 0.008 250);
-  --accent-teal: oklch(72% 0.15 185);
-  --accent-coral: oklch(68% 0.18 25);
-  --accent-amber: oklch(75% 0.15 75);
-  --accent-purple: oklch(65% 0.15 300);
-  --border: oklch(25% 0.01 250);
-  --radius: 6px;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --bg-primary: #0a0d14;
+  --bg-secondary: #0f1422;
+  --panel-bg: rgba(18, 24, 38, 0.75);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --panel-hover: rgba(25, 34, 54, 0.85);
+  
+  --text-primary: #f0f4fc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  
+  --state-normal: #10b981;
+  --state-normal-glow: rgba(16, 185, 129, 0.25);
+  --state-monitor: #06b6d4;
+  --state-monitor-glow: rgba(6, 182, 212, 0.25);
+  --state-restrict: #f59e0b;
+  --state-restrict-glow: rgba(245, 158, 11, 0.25);
+  --state-approval: #ec4899;
+  --state-approval-glow: rgba(236, 72, 153, 0.25);
+  --state-quarantine: #ef4444;
+  --state-quarantine-glow: rgba(239, 68, 68, 0.35);
+
+  --accent-cyan: #00e5ff;
+  --accent-purple: #8b5cf6;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-heading: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition: none !important; animation: none !important; }
-}
-
-html { font-size: 15px; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  background: var(--surface-0);
+  font-family: var(--font-sans);
+  background: radial-gradient(circle at 50% 0%, #151d32 0%, var(--bg-primary) 70%);
   color: var(--text-primary);
-  line-height: 1.6;
+  line-height: 1.5;
   min-height: 100vh;
-  letter-spacing: 0.01em;
+  padding-bottom: 40px;
 }
 
 .layout {
-  max-width: 1280px;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 32px 24px;
+  padding: 24px 28px;
 }
 
+/* Header */
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 32px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--panel-border);
 }
 
-.logo {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.logo h1 {
-  font-size: 1.2rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.logo .version {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  font-weight: 400;
-}
-
-.status-pill {
+.brand {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 14px;
+}
+
+.brand-icon {
+  width: 44px;
+  height: 44px;
+  background: linear-gradient(135deg, #00e5ff 0%, #8b5cf6 100%);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 20px rgba(0, 229, 255, 0.35);
+}
+
+.brand-icon svg {
+  width: 26px;
+  height: 26px;
+  fill: #fff;
+}
+
+.brand-title h1 {
+  font-family: var(--font-heading);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, #fff 0%, #cbd5e1 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.brand-title p {
   font-size: 0.8rem;
   color: var(--text-secondary);
-  background: var(--surface-1);
-  padding: 6px 12px;
-  border-radius: 20px;
+  letter-spacing: 0.02em;
 }
 
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent-teal);
-}
-
-.status-dot.disconnected { background: var(--accent-coral); }
-
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  grid-template-rows: auto auto 1fr;
-  gap: 16px;
-}
-
-.panel {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  transition: border-color 200ms var(--ease-out);
-}
-
-.panel:hover { border-color: oklch(30% 0.01 250); }
-
-.panel-header {
+.header-controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.panel-title {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-
-.stat-grid {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-}
-
-.stat {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-}
-
-.stat-value {
-  font-size: 2rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-}
-
-.stat-value.teal { color: var(--accent-teal); }
-.stat-value.coral { color: var(--accent-coral); }
-.stat-value.amber { color: var(--accent-amber); }
-.stat-value.purple { color: var(--accent-purple); }
-
-.stat-label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-top: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.feed-panel {
-  grid-column: 1 / 3;
-  grid-row: 3;
-  max-height: 500px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.feed-scroll {
-  overflow-y: auto;
-  flex: 1;
-}
-
-.feed-entry {
-  display: grid;
-  grid-template-columns: 80px 1fr auto;
   gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.82rem;
-  align-items: center;
-  opacity: 0;
-  transform: translateY(-4px);
-  animation: fadeIn 300ms var(--ease-out) forwards;
-}
-
-@keyframes fadeIn {
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.feed-time {
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.75rem;
-}
-
-.feed-tool {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.feed-server {
-  color: var(--text-muted);
-  font-size: 0.72rem;
 }
 
 .badge {
-  font-size: 0.68rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
   font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 3px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
-.badge-allowed { background: oklch(25% 0.05 185); color: var(--accent-teal); }
-.badge-blocked { background: oklch(25% 0.05 25); color: var(--accent-coral); }
-.badge-rate-limited { background: oklch(25% 0.05 75); color: var(--accent-amber); }
+.badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
 
-.sidebar-panel {
-  grid-column: 3;
-  grid-row: 3;
+.btn {
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(8px);
+}
+
+.btn:hover {
+  background: var(--panel-hover);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn-danger {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.35);
+  border-color: #ef4444;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+}
+
+.btn-primary {
+  background: rgba(0, 229, 255, 0.18);
+  border-color: rgba(0, 229, 255, 0.4);
+  color: #67e8f9;
+}
+
+.btn-primary:hover {
+  background: rgba(0, 229, 255, 0.3);
+  border-color: var(--accent-cyan);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.4);
+}
+
+/* Glass Panels */
+.glass-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  transition: border-color 0.2s ease;
+}
+
+.glass-panel:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Stat Grid */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
+}
+
+.stat-card-title {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.stat-card-value {
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.security-state-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 20, 34, 0.5) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  transition: all 0.3s ease;
+}
+
+.security-state-banner.MONITOR {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(15, 20, 34, 0.5) 100%);
+  border-color: var(--state-monitor);
+}
+
+.security-state-banner.RESTRICT {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(15, 20, 34, 0.5) 100%);
+  border-color: var(--state-restrict);
+}
+
+.security-state-banner.HUMAN_APPROVAL {
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.2) 0%, rgba(15, 20, 34, 0.5) 100%);
+  border-color: var(--state-approval);
+}
+
+.security-state-banner.QUARANTINE {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.25) 0%, rgba(15, 20, 34, 0.6) 100%);
+  border-color: var(--state-quarantine);
+  box-shadow: 0 0 25px var(--state-quarantine-glow);
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
   gap: 16px;
 }
 
-.server-item {
+.state-badge-giant {
+  font-family: var(--font-heading);
+  font-size: 1.2rem;
+  font-weight: 800;
+  padding: 8px 18px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+  gap: 8px;
 }
 
-.server-item:last-child { border-bottom: none; }
-
-.server-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-teal);
-  flex-shrink: 0;
+.banner-desc {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
 }
 
-.server-name {
-  font-size: 0.82rem;
-  font-weight: 500;
+/* Tab Navigation */
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 8px;
 }
 
-.server-tools {
-  font-size: 0.7rem;
+.tab-btn {
+  font-family: var(--font-heading);
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tab-btn.active {
+  color: #fff;
+  background: rgba(0, 229, 255, 0.15);
+  border: 1px solid rgba(0, 229, 255, 0.35);
+}
+
+/* Tables */
+.table-container {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.86rem;
+}
+
+th {
+  font-family: var(--font-heading);
+  font-size: 0.75rem;
   color: var(--text-muted);
-  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--panel-border);
+  font-weight: 600;
 }
 
-.rate-bar {
-  margin-bottom: 12px;
+td {
+  padding: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: middle;
 }
 
-.rate-bar-header {
+tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Caps Tag */
+.caps-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cap-tag {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cap-tag.mismatch {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  font-weight: 600;
+  animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.3); }
+}
+
+/* Incident Explainer Cards */
+.incident-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.incident-card {
+  background: rgba(25, 30, 45, 0.6);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  border-left: 4px solid var(--state-quarantine);
+}
+
+.incident-card.drift {
+  border-left-color: var(--state-restrict);
+}
+
+.incident-header {
   display: flex;
   justify-content: space-between;
-  font-size: 0.75rem;
+  margin-bottom: 10px;
+}
+
+.incident-title {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.evidence-list {
+  margin: 10px 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.evidence-list li {
   margin-bottom: 4px;
 }
 
-.rate-bar-label { color: var(--text-secondary); }
-.rate-bar-value { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-
-.rate-bar-track {
-  height: 4px;
-  background: var(--surface-2);
-  border-radius: 2px;
+/* Gauge Bar */
+.risk-meter {
+  height: 8px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
   overflow: hidden;
+  margin-top: 6px;
 }
 
-.rate-bar-fill {
+.risk-fill {
   height: 100%;
-  border-radius: 2px;
-  background: var(--accent-teal);
-  transition: width 500ms var(--ease-out);
+  border-radius: 4px;
+  transition: width 0.4s ease;
 }
 
-.rate-bar-fill.warning { background: var(--accent-amber); }
-.rate-bar-fill.critical { background: var(--accent-coral); }
-
-.alert-item {
-  padding: 10px 12px;
-  background: oklch(18% 0.02 25);
-  border-radius: var(--radius);
-  border-left: 3px solid var(--accent-coral);
-  margin-bottom: 8px;
-  font-size: 0.78rem;
+/* Demo toolbar */
+.demo-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  margin-bottom: 24px;
 }
 
-.alert-tool {
+.demo-title {
   font-weight: 600;
-  color: var(--accent-coral);
+  font-size: 0.9rem;
+  color: #c4b5fd;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.alert-reason {
-  color: var(--text-secondary);
-  margin-top: 2px;
-}
-
-.alert-time {
-  font-size: 0.68rem;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.empty-state {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  padding: 24px 0;
-  text-align: center;
-}
-
-.skeleton {
-  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: 3px;
-  height: 14px;
-  margin-bottom: 8px;
-}
-
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-.rate-section, .alerts-section, .servers-section {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-}
-
-.section-title {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  margin-bottom: 12px;
+.mono {
+  font-family: var(--font-mono);
 }
 </style>
 </head>
 <body>
+
 <div class="layout">
   <header>
-    <div class="logo">
-      <h1>mcp-gateway</h1>
-      <span class="version">v0.1.0</span>
+    <div class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>
+      </div>
+      <div class="brand-title">
+        <h1>MCP-Sentinel</h1>
+        <p>Adaptive Security Control Plane for Model Context Protocol</p>
+      </div>
     </div>
-    <div class="status-pill">
-      <span class="status-dot" id="statusDot"></span>
-      <span id="statusText">connecting...</span>
+
+    <div class="header-controls">
+      <div id="liveBadge" class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">
+        <span class="badge-dot" style="background: #10b981;"></span> Live Monitoring
+      </div>
+      <button class="btn" id="refreshBtn" onclick="fetchData()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
     </div>
   </header>
 
-  <div class="stat-grid" id="stats">
-    <div class="stat">
-      <div class="stat-value teal" id="statAllowed">-</div>
-      <div class="stat-label">Allowed</div>
+  <!-- Interactive Demo Bar -->
+  <div class="demo-bar">
+    <div class="demo-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      Hackathon Interactive Demo Simulation
     </div>
-    <div class="stat">
-      <div class="stat-value coral" id="statBlocked">-</div>
-      <div class="stat-label">Blocked</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value amber" id="statRate">-</div>
-      <div class="stat-label">Rate Limited</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value purple" id="statTotal">-</div>
-      <div class="stat-label">Total Calls</div>
+    <div style="display: flex; gap: 10px;">
+      <button class="btn btn-danger" id="triggerAttackBtn" onclick="triggerRugPull(true)">
+        🔥 Trigger Rug-Pull Malicious Mode
+      </button>
+      <button class="btn" id="resetDemoBtn" onclick="triggerRugPull(false)">
+        🔄 Reset to Clean Baseline
+      </button>
     </div>
   </div>
 
-  <div class="grid" style="margin-top: 16px;">
-    <div class="panel feed-panel">
-      <div class="panel-header">
-        <span class="panel-title">Live Audit Feed</span>
-        <span class="panel-title" id="feedCount">0 entries</span>
+  <!-- Security State Giant Banner -->
+  <div id="stateBanner" class="security-state-banner NORMAL">
+    <div class="banner-content">
+      <div id="stateBadge" class="state-badge-giant" style="background: #10b981; color: #fff;">
+        NORMAL
       </div>
-      <div class="feed-scroll" id="feedScroll">
-        <div class="empty-state" id="feedEmpty">No audit entries yet. Make some tool calls.</div>
+      <div>
+        <div style="font-family: var(--font-heading); font-weight: 700; font-size: 1.15rem;" id="bannerTitle">
+          System Operating Within Baselines
+        </div>
+        <div class="banner-desc" id="bannerDesc">
+          All MCP tools conforming to declared capability profiles. No behavioral drift detected.
+        </div>
       </div>
     </div>
+    <div style="text-align: right;">
+      <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Peak Risk Index</div>
+      <div id="peakRiskVal" style="font-family: var(--font-heading); font-size: 2.2rem; font-weight: 800; color: #10b981;">0/100</div>
+    </div>
+  </div>
 
-    <div class="sidebar-panel">
-      <div class="servers-section">
-        <div class="section-title">Upstream Servers</div>
-        <div id="serverList">
-          <div class="empty-state">No servers connected</div>
-        </div>
+  <!-- Stats Grid -->
+  <div class="stat-grid">
+    <div class="glass-panel stat-card">
+      <div class="stat-card-title">Risk Engine Assessment</div>
+      <div class="stat-card-value" id="statRiskScore" style="color: #10b981;">0</div>
+      <div class="risk-meter">
+        <div id="riskMeterFill" class="risk-fill" style="width: 0%; background: #10b981;"></div>
       </div>
+    </div>
+    <div class="glass-panel stat-card">
+      <div class="stat-card-title">Registered Servers</div>
+      <div class="stat-card-value" id="statServers">0</div>
+      <div style="font-size: 0.75rem; color: var(--text-muted);" id="statTools">0 active tools</div>
+    </div>
+    <div class="glass-panel stat-card">
+      <div class="stat-card-title">Quarantined Servers</div>
+      <div class="stat-card-value" id="statQuarantine" style="color: #ef4444;">0</div>
+      <div style="font-size: 0.75rem; color: var(--text-muted);">Execution halted</div>
+    </div>
+    <div class="glass-panel stat-card">
+      <div class="stat-card-title">Blocked Calls</div>
+      <div class="stat-card-value" id="statBlocked" style="color: #f59e0b;">0</div>
+      <div style="font-size: 0.75rem; color: var(--text-muted);">Enforced by Sentinel</div>
+    </div>
+    <div class="glass-panel stat-card">
+      <div class="stat-card-title">Security Incidents</div>
+      <div class="stat-card-value" id="statIncidents" style="color: #8b5cf6;">0</div>
+      <div style="font-size: 0.75rem; color: var(--text-muted);">Recorded in ledger</div>
+    </div>
+  </div>
 
-      <div class="rate-section">
-        <div class="section-title">Rate Limits</div>
-        <div id="rateList">
-          <div class="empty-state">No rate data yet</div>
-        </div>
-      </div>
+  <!-- Navigation Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('tools')">Tool Capabilities & Drift</button>
+    <button class="tab-btn" onclick="switchTab('servers')">MCP Servers</button>
+    <button class="tab-btn" onclick="switchTab('timeline')">Risk Timeline & Events</button>
+    <button class="tab-btn" onclick="switchTab('explainer')">Explainable Decisions</button>
+    <button class="tab-btn" onclick="switchTab('approvals')">Pending Approvals</button>
+  </div>
 
-      <div class="alerts-section">
-        <div class="section-title">Security Alerts</div>
-        <div id="alertList">
-          <div class="empty-state">No alerts</div>
-        </div>
+  <!-- TAB: Tool Capabilities -->
+  <div id="tab-tools" class="glass-panel">
+    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Declared vs Authorized vs Observed Capabilities</h3>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Tool Name</th>
+            <th>Server</th>
+            <th>Declared Capabilities</th>
+            <th>Authorized Capabilities</th>
+            <th>Observed Capabilities</th>
+            <th>Behavior Drift</th>
+            <th>Risk</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody id="toolsTableBody">
+          <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Loading tool capability profiles...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB: MCP Servers -->
+  <div id="tab-servers" class="glass-panel" style="display: none;">
+    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Connected MCP Upstreams & Quarantine Status</h3>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Server ID / Name</th>
+            <th>Trust Status</th>
+            <th>Risk Score</th>
+            <th>Security State</th>
+            <th>Baseline Hash</th>
+            <th>Incidents</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="serversTableBody">
+          <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Loading servers...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB: Risk Timeline & Events -->
+  <div id="tab-timeline" class="glass-panel" style="display: none;">
+    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Structured Security Events & State Transitions</h3>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Event Type</th>
+            <th>Server / Tool</th>
+            <th>Decision</th>
+            <th>Risk</th>
+            <th>State</th>
+            <th>Reasons / Evidence</th>
+          </tr>
+        </thead>
+        <tbody id="eventsTableBody">
+          <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Loading event stream...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB: Explainable Decisions -->
+  <div id="tab-explainer" class="glass-panel" style="display: none;">
+    <h3 style="font-family: var(--font-heading); margin-bottom: 6px;">Explainable Security Decisions</h3>
+    <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 18px;">
+      Every blocked, restricted, or quarantined action provides exact attribution: WHAT, WHY, EVIDENCE, POLICY, and ACTION.
+    </p>
+    <div id="explainerContainer" class="incident-grid">
+      <div style="grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: 20px;">
+        No active security violations or drift incidents recorded.
       </div>
+    </div>
+  </div>
+
+  <!-- TAB: Pending Approvals -->
+  <div id="tab-approvals" class="glass-panel" style="display: none;">
+    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Human Approval Gate (ABAC & Elevated Risk)</h3>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Approval ID</th>
+            <th>Tool Name</th>
+            <th>Requested By</th>
+            <th>Risk Score</th>
+            <th>Reasons</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="approvalsTableBody">
+          <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No pending human approval requests.</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
 
 <script>
-const API_BASE = window.location.origin;
-let lastEntryCount = 0;
+let activeTab = 'tools';
+
+function switchTab(tabId) {
+  activeTab = tabId;
+  ['tools', 'servers', 'timeline', 'explainer', 'approvals'].forEach(t => {
+    document.getElementById(`tab-${t}`).style.display = t === tabId ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tab-btn').forEach((btn, idx) => {
+    const tabs = ['tools', 'servers', 'timeline', 'explainer', 'approvals'];
+    btn.classList.toggle('active', tabs[idx] === tabId);
+  });
+}
+
+function getStateColor(state) {
+  switch (state) {
+    case 'NORMAL': return '#10b981';
+    case 'MONITOR': return '#06b6d4';
+    case 'RESTRICT': return '#f59e0b';
+    case 'HUMAN_APPROVAL': return '#ec4899';
+    case 'QUARANTINE': return '#ef4444';
+    default: return '#94a3b8';
+  }
+}
+
+function renderCaps(caps, isObserved = false, declared = null) {
+  if (!caps) return '<span class="text-muted">None</span>';
+  const list = [];
+  
+  if (Array.isArray(caps.filesystem) && caps.filesystem.length > 0) {
+    caps.filesystem.forEach(f => {
+      const isMismatch = isObserved && declared && (!declared.filesystem || !declared.filesystem.includes(f));
+      list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">fs:${f}</span>`);
+    });
+  }
+  if (Array.isArray(caps.network) && caps.network.length > 0) {
+    caps.network.forEach(n => {
+      const isMismatch = isObserved && declared && (!declared.network || !declared.network.includes(n));
+      list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">net:${n}</span>`);
+    });
+  }
+  if (Array.isArray(caps.processes) && caps.processes.length > 0) {
+    caps.processes.forEach(p => {
+      const isMismatch = isObserved && declared && (!declared.processes || !declared.processes.includes(p));
+      list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">proc:${p}</span>`);
+    });
+  }
+  if (caps.envAccess) {
+    const isMismatch = isObserved && declared && !declared.envAccess;
+    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">env_access</span>`);
+  }
+  if (caps.externalNetwork) {
+    const isMismatch = isObserved && declared && !declared.externalNetwork;
+    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">external_net</span>`);
+  }
+  if (caps.sensitiveFileAccess) {
+    const isMismatch = isObserved && declared && !declared.sensitiveFileAccess;
+    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">sensitive_files</span>`);
+  }
+  if (caps.commandExecution) {
+    const isMismatch = isObserved && declared && !declared.commandExecution;
+    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">cmd_exec</span>`);
+  }
+
+  return list.length > 0 ? `<div class="caps-container">${list.join('')}</div>` : '<span class="text-muted">none</span>';
+}
 
 async function fetchData() {
   try {
-    const res = await fetch(`${API_BASE}/api/status`);
-    if (!res.ok) throw new Error('API error');
-    return await res.json();
-  } catch {
-    return null;
+    const [stateRes, serversRes, toolsRes, eventsRes, approvalsRes] = await Promise.all([
+      fetch('/api/sentinel/state').then(r => r.json()).catch(() => null),
+      fetch('/api/sentinel/servers').then(r => r.json()).catch(() => []),
+      fetch('/api/sentinel/tools').then(r => r.json()).catch(() => []),
+      fetch('/api/sentinel/events?limit=50').then(r => r.json()).catch(() => []),
+      fetch('/api/sentinel/approvals').then(r => r.json()).catch(() => []),
+    ]);
+
+    if (stateRes) {
+      updateOverview(stateRes);
+    }
+    if (serversRes) {
+      renderServers(serversRes);
+    }
+    if (toolsRes) {
+      renderTools(toolsRes);
+    }
+    if (eventsRes) {
+      renderEvents(eventsRes);
+      renderExplainer(eventsRes);
+    }
+    if (approvalsRes) {
+      renderApprovals(approvalsRes);
+    }
+  } catch (err) {
+    console.error('Error fetching dashboard data', err);
   }
 }
 
-function formatTime(ts) {
-  const d = new Date(ts);
-  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function updateOverview(overview) {
+  const state = overview.overallState || 'NORMAL';
+  const score = overview.maxRiskScore || 0;
+  const color = getStateColor(state);
+
+  // Banner
+  const banner = document.getElementById('stateBanner');
+  banner.className = `security-state-banner ${state}`;
+  const badge = document.getElementById('stateBadge');
+  badge.textContent = state;
+  badge.style.background = color;
+
+  document.getElementById('peakRiskVal').textContent = `${score}/100`;
+  document.getElementById('peakRiskVal').style.color = color;
+
+  if (state === 'QUARANTINE') {
+    document.getElementById('bannerTitle').textContent = '⚠️ CRITICAL: Server Quarantined — Execution Halted';
+    document.getElementById('bannerDesc').textContent = 'One or more MCP servers violated declared capabilities and exceeded quarantine risk threshold.';
+  } else if (state === 'RESTRICT' || state === 'HUMAN_APPROVAL') {
+    document.getElementById('bannerTitle').textContent = '⚡ Elevated Risk — Adaptive Policies Enforcing Restrictions';
+    document.getElementById('bannerDesc').textContent = 'High-risk operations restricted and sensitive actions requiring human authorization.';
+  } else if (state === 'MONITOR') {
+    document.getElementById('bannerTitle').textContent = '👁️ Enhanced Telemetry & Monitoring Active';
+    document.getElementById('bannerDesc').textContent = 'Behavioral anomalies observed; elevated observation active.';
+  } else {
+    document.getElementById('bannerTitle').textContent = 'System Operating Within Normal Baselines';
+    document.getElementById('bannerDesc').textContent = 'All MCP tools conforming to declared capability profiles.';
+  }
+
+  // Stats
+  document.getElementById('statRiskScore').textContent = score;
+  document.getElementById('statRiskScore').style.color = color;
+  const fill = document.getElementById('riskMeterFill');
+  fill.style.width = `${Math.min(score, 100)}%`;
+  fill.style.background = color;
+
+  document.getElementById('statServers').textContent = overview.totalServers || 0;
+  document.getElementById('statTools').textContent = `${overview.totalTools || 0} registered tools`;
+  document.getElementById('statQuarantine').textContent = overview.quarantinedServers || 0;
+  document.getElementById('statBlocked').textContent = overview.blockedCalls || 0;
+  document.getElementById('statIncidents').textContent = overview.activeIncidents || 0;
 }
 
-function badgeClass(action) {
-  if (action === 'allowed') return 'badge-allowed';
-  if (action === 'blocked') return 'badge-blocked';
-  return 'badge-rate-limited';
-}
-
-function renderFeed(entries) {
-  const container = document.getElementById('feedScroll');
-  const empty = document.getElementById('feedEmpty');
-  const countEl = document.getElementById('feedCount');
-
-  if (entries.length === 0) {
-    empty.style.display = 'block';
+function renderTools(tools) {
+  const tbody = document.getElementById('toolsTableBody');
+  if (!tools || tools.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No tools registered yet</td></tr>';
     return;
   }
-  empty.style.display = 'none';
-  countEl.textContent = `${entries.length} entries`;
 
-  if (entries.length !== lastEntryCount) {
-    const recent = entries.slice(-50).reverse();
-    container.innerHTML = recent.map((e, i) => `
-      <div class="feed-entry" style="animation-delay: ${i * 30}ms">
-        <span class="feed-time">${formatTime(e.timestamp)}</span>
-        <span>
-          <span class="feed-tool">${e.tool}</span>
-          <span class="feed-server">${e.server}</span>
-        </span>
-        <span class="badge ${badgeClass(e.action)}">${e.action}</span>
-      </div>
-    `).join('');
-    lastEntryCount = entries.length;
-  }
-}
+  tbody.innerHTML = tools.map(t => {
+    const riskColor = t.riskScore > 75 ? '#ef4444' : t.riskScore > 50 ? '#f59e0b' : t.riskScore > 25 ? '#06b6d4' : '#10b981';
+    const hasDrift = t.currentFingerprint && t.baselineFingerprint && (
+      (t.currentFingerprint.envAccess && !t.baselineFingerprint.envAccess) ||
+      (t.currentFingerprint.externalNetwork && !t.baselineFingerprint.externalNetwork) ||
+      (t.currentFingerprint.sensitiveFileAccess && !t.baselineFingerprint.sensitiveFileAccess) ||
+      (t.currentFingerprint.filesystem.some(f => !t.baselineFingerprint.filesystem.includes(f)))
+    );
 
-function renderStats(entries) {
-  const allowed = entries.filter(e => e.action === 'allowed').length;
-  const blocked = entries.filter(e => e.action === 'blocked').length;
-  const rateLimited = entries.filter(e => e.reason && e.reason.includes('Rate limit')).length;
-
-  document.getElementById('statAllowed').textContent = allowed;
-  document.getElementById('statBlocked').textContent = blocked;
-  document.getElementById('statRate').textContent = rateLimited;
-  document.getElementById('statTotal').textContent = entries.length;
+    return `
+      <tr>
+        <td style="font-weight: 600; color: #fff;">${t.toolName}</td>
+        <td class="mono text-muted" style="font-size: 0.8rem;">${t.serverId}</td>
+        <td>${renderCaps(t.declaredCapabilities)}</td>
+        <td>${renderCaps(t.authorizedCapabilities)}</td>
+        <td>${renderCaps(t.currentFingerprint || t.declaredCapabilities, true, t.declaredCapabilities)}</td>
+        <td>
+          ${hasDrift 
+            ? '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4);">DRIFT DETECTED</span>'
+            : '<span class="badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399;">CONFORMANT</span>'
+          }
+        </td>
+        <td>
+          <span style="font-weight: 700; color: ${riskColor};">${t.riskScore}</span>
+        </td>
+        <td>
+          <span class="badge" style="background: ${getStateColor(t.state === 'QUARANTINED' ? 'QUARANTINE' : 'NORMAL')}; color: #fff;">
+            ${t.state}
+          </span>
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 
 function renderServers(servers) {
-  const container = document.getElementById('serverList');
+  const tbody = document.getElementById('serversTableBody');
   if (!servers || servers.length === 0) {
-    container.innerHTML = '<div class="empty-state">No servers connected</div>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No upstream servers registered</td></tr>';
     return;
   }
-  container.innerHTML = servers.map(s => `
-    <div class="server-item">
-      <span class="server-dot"></span>
-      <span class="server-name">${s.name}</span>
-      <span class="server-tools">${s.tools} tools</span>
-    </div>
-  `).join('');
+
+  tbody.innerHTML = servers.map(s => {
+    const isQuarantined = s.trustStatus === 'QUARANTINED' || s.securityState === 'QUARANTINE';
+    return `
+      <tr>
+        <td>
+          <div style="font-weight: 600; color: #fff;">${s.serverName}</div>
+          <div class="mono" style="font-size: 0.75rem; color: var(--text-muted);">${s.serverId}</div>
+        </td>
+        <td>
+          <span class="badge" style="background: ${isQuarantined ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.2)'}; color: ${isQuarantined ? '#fca5a5' : '#34d399'}; border: 1px solid ${isQuarantined ? '#ef4444' : '#10b981'};">
+            ${s.trustStatus}
+          </span>
+        </td>
+        <td>
+          <span style="font-weight: 700; color: ${getStateColor(s.securityState)};">${s.currentRisk}</span>
+        </td>
+        <td>
+          <span class="badge" style="background: ${getStateColor(s.securityState)}; color: #fff;">
+            ${s.securityState}
+          </span>
+        </td>
+        <td class="mono text-muted" style="font-size: 0.75rem;">
+          ${s.baselineHash ? s.baselineHash.slice(0, 12) + '...' : 'none'}
+        </td>
+        <td style="font-weight: 600;">${s.incidentCount || 0}</td>
+        <td>
+          ${isQuarantined 
+            ? `<button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="recoverServer('${s.serverId}')">Recover</button>`
+            : `<button class="btn btn-danger" style="padding: 4px 10px; font-size: 0.75rem;" onclick="quarantineServer('${s.serverId}')">Quarantine</button>`
+          }
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 
-function renderRateLimits(rateLimits) {
-  const container = document.getElementById('rateList');
-  if (!rateLimits || rateLimits.length === 0) {
-    container.innerHTML = '<div class="empty-state">No rate data yet</div>';
+function renderEvents(events) {
+  const tbody = document.getElementById('eventsTableBody');
+  if (!events || events.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No security events recorded yet</td></tr>';
     return;
   }
-  container.innerHTML = rateLimits.map(r => {
-    const pct = Math.min((r.count / r.limit) * 100, 100);
-    const cls = pct > 80 ? 'critical' : pct > 60 ? 'warning' : '';
+
+  tbody.innerHTML = events.slice().reverse().map(e => {
+    const time = new Date(e.timestamp).toLocaleTimeString();
+    const isBlock = e.decision === 'block';
     return `
-      <div class="rate-bar">
-        <div class="rate-bar-header">
-          <span class="rate-bar-label">${r.tool}</span>
-          <span class="rate-bar-value">${r.count}/${r.limit}</span>
+      <tr>
+        <td class="mono" style="font-size: 0.78rem; color: var(--text-muted);">${time}</td>
+        <td>
+          <span class="cap-tag" style="color: #fff; background: rgba(255,255,255,0.08);">${e.type}</span>
+        </td>
+        <td>
+          <div style="font-weight: 500;">${e.toolName || e.serverName || 'System'}</div>
+          <div class="mono" style="font-size: 0.72rem; color: var(--text-muted);">${e.serverName || ''}</div>
+        </td>
+        <td>
+          <span class="badge" style="background: ${isBlock ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)'}; color: ${isBlock ? '#fca5a5' : '#34d399'};">
+            ${e.decision || 'recorded'}
+          </span>
+        </td>
+        <td style="font-weight: 600; color: ${getStateColor(e.securityState || 'NORMAL')};">${e.riskScore ?? '-'}</td>
+        <td>
+          <span class="badge" style="background: ${getStateColor(e.securityState || 'NORMAL')}; color: #fff; font-size: 0.7rem;">
+            ${e.securityState || 'NORMAL'}
+          </span>
+        </td>
+        <td style="font-size: 0.8rem; color: var(--text-secondary); max-width: 320px;">
+          ${Array.isArray(e.reasons) ? e.reasons.join('; ') : (e.reasons || '')}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderExplainer(events) {
+  const container = document.getElementById('explainerContainer');
+  const violationEvents = events.filter(e => e.decision === 'block' || e.type === 'BEHAVIOR_DRIFT' || e.type === 'SERVER_QUARANTINED');
+
+  if (violationEvents.length === 0) {
+    container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: 20px;">No active security violations or drift incidents recorded.</div>';
+    return;
+  }
+
+  container.innerHTML = violationEvents.slice(-6).reverse().map(e => {
+    const isQuarantine = e.type === 'SERVER_QUARANTINED' || e.securityState === 'QUARANTINE';
+    return `
+      <div class="incident-card ${isQuarantine ? '' : 'drift'}">
+        <div class="incident-header">
+          <div class="incident-title" style="color: ${isQuarantine ? '#fca5a5' : '#fde68a'};">
+            ${isQuarantine ? '🔴 Server Quarantined' : '⚠️ Behavioral Drift Detected'}
+          </div>
+          <span class="mono" style="font-size: 0.75rem; color: var(--text-muted);">
+            ${new Date(e.timestamp).toLocaleTimeString()}
+          </span>
         </div>
-        <div class="rate-bar-track">
-          <div class="rate-bar-fill ${cls}" style="width: ${pct}%"></div>
+        <div style="font-size: 0.85rem; margin-bottom: 8px;">
+          <strong>Target:</strong> <span class="mono">${e.serverName}/${e.toolName || 'all'}</span> | 
+          <strong>Risk Score:</strong> <span style="color: ${getStateColor(e.securityState)}; font-weight: 700;">${e.riskScore}</span>
+        </div>
+        <div style="font-size: 0.82rem; color: #cbd5e1; margin-bottom: 6px;"><strong>Evidence & Findings:</strong></div>
+        <ul class="evidence-list">
+          ${Array.isArray(e.reasons) && e.reasons.length > 0 
+            ? e.reasons.map(r => `<li>${r}</li>`).join('') 
+            : '<li>Capability mismatch vs established baseline</li>'
+          }
+        </ul>
+        <div style="font-size: 0.8rem; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between;">
+          <span><strong>Policy Applied:</strong> <span class="mono">${e.policy || 'adaptive-runtime-policy'}</span></span>
+          <span><strong>Action Taken:</strong> <span style="font-weight: 600; color: ${isQuarantine ? '#ef4444' : '#f59e0b'};">${e.decision || 'BLOCKED'}</span></span>
         </div>
       </div>
     `;
   }).join('');
 }
 
-function renderAlerts(entries) {
-  const container = document.getElementById('alertList');
-  const blocked = entries.filter(e => e.action === 'blocked').slice(-5).reverse();
-  if (blocked.length === 0) {
-    container.innerHTML = '<div class="empty-state">No alerts</div>';
+function renderApprovals(approvals) {
+  const tbody = document.getElementById('approvalsTableBody');
+  if (!approvals || approvals.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No pending human approval requests</td></tr>';
     return;
   }
-  container.innerHTML = blocked.map(e => `
-    <div class="alert-item">
-      <div class="alert-tool">${e.tool}</div>
-      <div class="alert-reason">${e.reason || 'Blocked'}</div>
-      <div class="alert-time">${formatTime(e.timestamp)}</div>
-    </div>
+
+  tbody.innerHTML = approvals.map(a => `
+    <tr>
+      <td class="mono">${a.id}</td>
+      <td style="font-weight: 600;">${a.toolName}</td>
+      <td>${a.userId} (${a.userRole})</td>
+      <td style="font-weight: 700; color: #ec4899;">${a.riskScore}</td>
+      <td style="font-size: 0.8rem; color: var(--text-secondary);">${(a.reasons || []).join(', ')}</td>
+      <td><span class="badge" style="background: rgba(236,72,153,0.2); color: #f472b6;">${a.status}</span></td>
+      <td>
+        <button class="btn btn-primary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="decideApproval('${a.id}', 'approve')">Approve</button>
+        <button class="btn btn-danger" style="padding: 4px 8px; font-size: 0.75rem;" onclick="decideApproval('${a.id}', 'deny')">Deny</button>
+      </td>
+    </tr>
   `).join('');
 }
 
-async function update() {
-  const data = await fetchData();
-  if (!data) {
-    document.getElementById('statusDot').classList.add('disconnected');
-    document.getElementById('statusText').textContent = 'disconnected';
-    return;
+async function triggerRugPull(active) {
+  try {
+    const res = await fetch('/api/sentinel/trigger-malicious', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serverName: 'rugpull-server', active })
+    });
+    const data = await res.json();
+    alert(data.message || (active ? 'Rug-pull malicious behavior triggered!' : 'Reset to baseline!'));
+    fetchData();
+  } catch (err) {
+    alert('Error triggering demo mode: ' + err);
   }
-
-  document.getElementById('statusDot').classList.remove('disconnected');
-  document.getElementById('statusText').textContent = `${data.servers?.length || 0} servers connected`;
-
-  renderStats(data.entries || []);
-  renderFeed(data.entries || []);
-  renderServers(data.servers || []);
-  renderRateLimits(data.rateLimits || []);
-  renderAlerts(data.entries || []);
 }
 
-update();
-setInterval(update, 2000);
+async function quarantineServer(serverId) {
+  if (!confirm(`Are you sure you want to quarantine server ${serverId}? All future tool executions will be blocked.`)) return;
+  try {
+    const res = await fetch(`/api/sentinel/servers/${serverId}/quarantine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Operator initiated quarantine from dashboard' })
+    });
+    fetchData();
+  } catch (err) {
+    alert('Failed to quarantine server: ' + err);
+  }
+}
+
+async function recoverServer(serverId) {
+  if (!confirm(`Recover server ${serverId}? It will transition to MONITOR state with enhanced telemetry.`)) return;
+  try {
+    const res = await fetch(`/api/sentinel/servers/${serverId}/recover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approvedBy: 'admin_dashboard' })
+    });
+    fetchData();
+  } catch (err) {
+    alert('Failed to recover server: ' + err);
+  }
+}
+
+async function decideApproval(id, action) {
+  try {
+    await fetch(`/api/sentinel/approvals/${id}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decidedBy: 'admin' })
+    });
+    fetchData();
+  } catch (err) {
+    alert(`Failed to ${action} approval: ` + err);
+  }
+}
+
+// Initial fetch and auto-refresh loop
+fetchData();
+setInterval(fetchData, 2000);
 </script>
 </body>
 </html>

@@ -26,3 +26,7 @@ export type {
   ReliabilityScoreCategory,
   ReportRenderer,
 } from "./types/index.js";
+
+// ── MCP-Sentinel Control Plane Exports ──
+export * from "./sentinel/index.js";
+

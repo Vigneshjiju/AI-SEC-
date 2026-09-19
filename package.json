@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "mcp-gateway": "dist/cli.js"
+    "mcp-gateway": "dist/cli.js",
+    "mcp-sentinel": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -22,6 +23,9 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "demo": "tsx test/demo.ts",
+    "evaluate": "tsx test/evaluation.ts",
+    "sentinel": "tsx src/cli.ts start -c mcp-sentinel.json -d",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -40,12 +44,13 @@
   "author": "Niraven",
   "license": "MIT",
   "dependencies": {
-    "commander": "^12.1.0",
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "commander": "^12.1.0"
   },
   "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.23.13",
     "typescript": "^5.8.3",
-    "vitest": "^3.1.4",
-    "@types/node": "^22.15.21"
+    "vitest": "^3.1.4"
   }
 }

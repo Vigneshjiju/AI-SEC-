@@ -21,6 +21,8 @@ import { createRateLimiter } from "../middleware/rate-limiter.js";
 import { createSecurityScanner, scanToolDescription } from "../middleware/security-scanner.js";
 import { createApprovalGate } from "../middleware/approval.js";
 import { AuditLogger } from "../middleware/audit-logger.js";
+import { AdaptiveController } from "../sentinel/adaptive-controller.js";
+import type { SentinelConfig, SentinelToolContext, SecurityState } from "../sentinel/types.js";
 
 interface UpstreamConnection {
   client: Client;
@@ -50,10 +52,17 @@ export class McpGateway {
   private descriptorBaseline: DescriptorBaseline | null = null;
   private descriptorBaselineDirty = false;
 
-  constructor(config: GatewayConfig) {
+  // ── MCP-Sentinel Integration ──
+  private sentinel: AdaptiveController | null = null;
+  private sentinelEnabled: boolean;
+  private defaultUserId: string = "analyst1";
+  private defaultUserRole: string = "analyst";
+
+  constructor(config: GatewayConfig, sentinelConfig?: Partial<SentinelConfig>) {
     this.config = config;
+    this.sentinelEnabled = sentinelConfig !== undefined || (config as any).sentinel !== undefined;
     this.server = new Server(
-      { name: "mcp-gateway", version: "0.1.0" },
+      { name: "mcp-sentinel", version: "1.0.0" },
       { capabilities: { tools: {} } }
     );
 
@@ -73,7 +82,18 @@ export class McpGateway {
       this.auditLogger = new AuditLogger(config.audit);
     }
 
+    // ── Initialize Sentinel ──
+    if (this.sentinelEnabled) {
+      const sConfig = sentinelConfig ?? (config as any).sentinel;
+      this.sentinel = new AdaptiveController(sConfig);
+      process.stderr.write(`[sentinel] Adaptive security control plane initialized\n`);
+    }
+
     this.setupHandlers();
+  }
+
+  getSentinel(): AdaptiveController | null {
+    return this.sentinel;
   }
 
   private setupHandlers(): void {
@@ -112,6 +132,17 @@ export class McpGateway {
 
             this.toolToServer.set(prefixedName, serverName);
             this.toolAnnotations.set(prefixedName, normalizeAnnotations(tool.annotations));
+
+            // ── Register tool in Sentinel registry ──
+            if (this.sentinel) {
+              const server = this.sentinel.registry.getServerByName(serverName);
+              if (server) {
+                this.sentinel.registry.registerTool(server.serverId, tool.name, {
+                  description: tool.description ?? "",
+                  inputSchema: tool.inputSchema,
+                });
+              }
+            }
 
             let description = tool.description ?? "";
             if (findings.length > 0) {
@@ -160,6 +191,7 @@ export class McpGateway {
         annotations: this.toolAnnotations.get(toolName),
       };
 
+      // ── Existing middleware pipeline ──
       const middlewareResult = await this.runMiddlewares(ctx);
 
       if (middlewareResult.action === "block") {
@@ -184,6 +216,54 @@ export class McpGateway {
         };
       }
 
+      // ══════════════════════════════════════════════
+      // MCP-SENTINEL PRE-EXECUTION CHECK
+      // ══════════════════════════════════════════════
+      if (this.sentinel) {
+        const server = this.sentinel.registry.getServerByName(serverName);
+        const tool = this.sentinel.registry.getToolByPrefixedName(toolName);
+
+        const sentinelCtx: SentinelToolContext = {
+          server: serverName,
+          serverId: server?.serverId ?? "",
+          tool: originalToolName,
+          toolId: tool?.toolId ?? "",
+          args: request.params.arguments,
+          userId: this.defaultUserId,
+          userRole: this.defaultUserRole,
+          riskScore: server?.currentRisk ?? 0,
+          securityState: server?.securityState ?? "NORMAL",
+          annotations: ctx.annotations,
+        };
+
+        const preDecision = this.sentinel.preExecute(sentinelCtx);
+
+        if (preDecision.action === "block") {
+          await this.auditSentinel(ctx, "blocked", preDecision.reason, preDecision.policyDecision.riskScore, preDecision.securityState);
+          return {
+            content: [{
+              type: "text",
+              text: `[BLOCKED by MCP-Sentinel] ${preDecision.reason}\n\nRisk Score: ${preDecision.policyDecision.riskScore}\nSecurity State: ${preDecision.securityState}\nPolicy: ${preDecision.policyDecision.policy}`,
+            }],
+            isError: true,
+          };
+        }
+
+        if (preDecision.action === "require-approval") {
+          await this.auditSentinel(ctx, "pending-approval", preDecision.reason, preDecision.policyDecision.riskScore, preDecision.securityState);
+          return {
+            content: [{
+              type: "text",
+              text: `[APPROVAL REQUIRED by MCP-Sentinel] ${preDecision.reason}\n\nRisk Score: ${preDecision.policyDecision.riskScore}\nSecurity State: ${preDecision.securityState}\nApproval ID: ${preDecision.approvalRequest?.id ?? "N/A"}`,
+            }],
+            isError: true,
+          };
+        }
+      }
+
+      // ══════════════════════════════════════════════
+      // EXECUTE TOOL CALL
+      // ══════════════════════════════════════════════
       const start = Date.now();
       try {
         const result = await upstream.client.callTool({
@@ -191,7 +271,45 @@ export class McpGateway {
           arguments: request.params.arguments ?? {},
         });
 
-        await this.audit(ctx, "allowed", undefined, Date.now() - start);
+        const duration = Date.now() - start;
+
+        // ══════════════════════════════════════════════
+        // MCP-SENTINEL POST-EXECUTION ANALYSIS
+        // ══════════════════════════════════════════════
+        if (this.sentinel) {
+          const outputText = this.extractOutputText(result);
+          const server = this.sentinel.registry.getServerByName(serverName);
+          const tool = this.sentinel.registry.getToolByPrefixedName(toolName);
+
+          const sentinelCtx: SentinelToolContext = {
+            server: serverName,
+            serverId: server?.serverId ?? "",
+            tool: originalToolName,
+            toolId: tool?.toolId ?? "",
+            args: request.params.arguments,
+            userId: this.defaultUserId,
+            userRole: this.defaultUserRole,
+            riskScore: server?.currentRisk ?? 0,
+            securityState: server?.securityState ?? "NORMAL",
+            annotations: ctx.annotations,
+          };
+
+          const postResult = this.sentinel.postExecute(sentinelCtx, outputText, duration);
+
+          // If post-execution analysis quarantined the server, notify
+          if (postResult.quarantined) {
+            await this.auditSentinel(ctx, "blocked",
+              `Server quarantined after tool execution (risk: ${postResult.riskAssessment.score})`,
+              postResult.riskAssessment.score, "QUARANTINE");
+          }
+
+          // Augmented audit with Sentinel data
+          await this.auditSentinel(ctx, "allowed", undefined, postResult.riskAssessment.score,
+            postResult.riskAssessment.state, duration, postResult.driftFindings.length > 0 ? postResult.driftFindings.map(f => f.message) : undefined);
+        } else {
+          await this.audit(ctx, "allowed", undefined, duration);
+        }
+
         return result;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -202,6 +320,16 @@ export class McpGateway {
         };
       }
     });
+  }
+
+  private extractOutputText(result: unknown): string {
+    if (!result || typeof result !== "object") return "";
+    const r = result as { content?: Array<{ type: string; text?: string }> };
+    if (!Array.isArray(r.content)) return "";
+    return r.content
+      .filter(c => c.type === "text" && typeof c.text === "string")
+      .map(c => c.text!)
+      .join("\n");
   }
 
   private shouldBlockDescriptor(findings: SecurityFinding[]): boolean {
@@ -295,6 +423,34 @@ export class McpGateway {
     });
   }
 
+  private async auditSentinel(
+    ctx: ToolCallContext,
+    action: AuditEntry["action"],
+    reason?: string,
+    riskScore?: number,
+    securityState?: string,
+    duration?: number,
+    driftReasons?: string[],
+  ): Promise<void> {
+    if (!this.auditLogger) return;
+    await this.auditLogger.log({
+      timestamp: new Date().toISOString(),
+      server: ctx.server,
+      tool: ctx.tool,
+      action,
+      reason: reason ? `[Sentinel] ${reason}` : undefined,
+      args: ctx.args,
+      duration,
+      // Extended sentinel audit data stored in result
+      result: {
+        sentinel: true,
+        riskScore,
+        securityState,
+        driftReasons,
+      },
+    });
+  }
+
   async connectUpstreams(): Promise<void> {
     for (const [name, serverConfig] of Object.entries(this.config.servers)) {
       if (!serverConfig.command) continue;
@@ -313,6 +469,15 @@ export class McpGateway {
 
         await client.connect(transport);
         this.upstreams.set(name, { client, transport, name });
+
+        // ── Register server in Sentinel ──
+        if (this.sentinel) {
+          this.sentinel.registry.registerServer(name, {
+            source: "config",
+            transport: "stdio",
+          });
+          process.stderr.write(`[sentinel] Registered server: ${name}\n`);
+        }
 
         transport.onclose = () => {
           process.stderr.write(`[mcp-gateway] Upstream disconnected: ${name}\n`);

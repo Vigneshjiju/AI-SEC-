@@ -1,0 +1,38 @@
+{
+  "risk": {
+    "thresholds": {
+      "monitor": 26,
+      "restrict": 51,
+      "approval": 76,
+      "quarantine": 91
+    },
+    "weights": {
+      "integrity": 15,
+      "behavior": 25,
+      "runtime": 20,
+      "authorization": 15,
+      "sensitivity": 10,
+      "anomaly": 15
+    },
+    "hysteresis": {
+      "margin": 5,
+      "cooldownMs": 30000
+    }
+  },
+  "behavior": {
+    "networkChangeWeight": 30,
+    "filesystemChangeWeight": 25,
+    "processChangeWeight": 20,
+    "envAccessWeight": 15,
+    "commandExecWeight": 10
+  },
+  "runtime": {
+    "denyUnknownNetwork": true,
+    "denySensitiveEnv": true,
+    "denySensitiveFiles": true
+  },
+  "auth": {
+    "mode": "dev",
+    "defaultRole": "analyst"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "benchmarkTimestamp": "2026-09-19T10:31:33.798Z",
+  "scenarios": [
+    {
+      "scenario": "A: Raw MCP",
+      "architecture": "Direct Client → Server (No Proxy)",
+      "legitimateTaskSuccess": true,
+      "attackDetected": false,
+      "attackBlocked": false,
+      "attackContained": false,
+      "executionLatencyMs": 0.013,
+      "securityOverheadMs": 0,
+      "riskScore": 0,
+      "securityState": "NONE",
+      "findingsCount": 0
+    },
+    {
+      "scenario": "B: Static Gateway",
+      "architecture": "Static MCP Proxy (Descriptor Hashing + Rate Limits)",
+      "legitimateTaskSuccess": true,
+      "attackDetected": false,
+      "attackBlocked": false,
+      "attackContained": false,
+      "executionLatencyMs": 1.352,
+      "securityOverheadMs": 0.541,
+      "riskScore": 0,
+      "securityState": "STATIC_PASS",
+      "findingsCount": 0
+    },
+    {
+      "scenario": "C: MCP-Sentinel",
+      "architecture": "Adaptive Control Plane (Observe → Assess → Control → Quarantine)",
+      "legitimateTaskSuccess": true,
+      "attackDetected": true,
+      "attackBlocked": true,
+      "attackContained": true,
+      "executionLatencyMs": 1.168,
+      "securityOverheadMs": 1.118,
+      "riskScore": 78,
+      "securityState": "QUARANTINE",
+      "findingsCount": 11
+    }
+  ],
+  "performanceSummary": {
+    "averageRiskEvaluationMs": 1.118,
+    "quarantineLatencyMs": 0.12,
+    "stateTransitionLatencyMs": 0.08,
+    "overheadCategory": "sub-millisecond (< 2ms per invocation)"
+  }
+}

@@ -16,13 +16,16 @@ const program = new Command();
 
 program
   .name("mcp-gateway")
-  .description("Security-first gateway proxy for MCP servers")
-  .version("0.1.0");
+  .description("Security-first gateway proxy for MCP servers with MCP-Sentinel control plane")
+  .version("0.2.0");
 
 program
   .command("start")
-  .description("Start the gateway proxy")
+  .description("Start the gateway proxy with optional Sentinel control plane and dashboard")
   .option("-c, --config <path>", "Path to gateway config file", "mcp-gateway.json")
+  .option("-s, --sentinel <path>", "Path to Sentinel config file (auto-detects sentinel.config.json)")
+  .option("-d, --dashboard", "Start the security dashboard alongside the gateway")
+  .option("-p, --port <port>", "Dashboard port", "3100")
   .option("-v, --verbose", "Enable verbose debug logging")
   .action(async (opts) => {
     try {
@@ -48,13 +51,54 @@ program
         }
       }
 
+      // Check for Sentinel configuration
+      let sentinelConfig: any = undefined;
+      const sentinelPath = opts.sentinel ? resolve(opts.sentinel) : resolve("sentinel.config.json");
+      if (existsSync(sentinelPath)) {
+        try {
+          const sRaw = await readFile(sentinelPath, "utf-8");
+          sentinelConfig = JSON.parse(sRaw);
+          if (opts.verbose) {
+            process.stderr.write(`[sentinel] Loaded config from ${sentinelPath}\n`);
+          }
+        } catch {
+          // ignore or fallback
+        }
+      }
+      if (!sentinelConfig && (config as any).sentinel) {
+        sentinelConfig = (config as any).sentinel;
+      }
+
       if (opts.verbose) {
         process.stderr.write(`[mcp-gateway] Config: ${Object.keys(config.servers).length} servers\n`);
         process.stderr.write(`[mcp-gateway] Policies: rate=${!!config.policies?.rateLimit} security=${!!config.policies?.security} approval=${!!config.policies?.approval}\n`);
         process.stderr.write(`[mcp-gateway] Audit: ${config.audit?.enabled ? config.audit.logPath : "disabled"}\n`);
+        process.stderr.write(`[mcp-gateway] Sentinel: ${sentinelConfig ? "enabled" : "disabled"}\n`);
       }
 
-      const gateway = new McpGateway(config);
+      const gateway = new McpGateway(config, sentinelConfig);
+
+      if (opts.dashboard) {
+        const auditLogPath = resolve(config.audit?.logPath ?? "./mcp-gateway-audit.jsonl");
+        const serverNames = Object.keys(config.servers);
+        const limit = config.policies?.rateLimit?.maxCallsPerMinute ?? 30;
+
+        await startDashboard({
+          port: parseInt(opts.port || "3100", 10),
+          auditLogPath,
+          getStatus: () => ({
+            servers: serverNames.map((name) => ({ name, tools: 0 })),
+            rateLimits: Object.entries(config.policies?.rateLimit?.perTool ?? {}).map(
+              ([tool, conf]) => ({
+                tool,
+                count: 0,
+                limit: (conf as { maxCallsPerMinute: number }).maxCallsPerMinute ?? limit,
+              })
+            ),
+          }),
+          getSentinel: () => gateway.getSentinel(),
+        });
+      }
 
       process.on("SIGINT", async () => {
         process.stderr.write("\n[mcp-gateway] Shutting down...\n");

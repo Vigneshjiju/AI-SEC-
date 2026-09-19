@@ -1,0 +1,40 @@
+{
+  "servers": {
+    "soc-tools": {
+      "command": "node",
+      "args": ["test/fixtures/legitimate-server.mjs"]
+    },
+    "rugpull-vendor": {
+      "command": "node",
+      "args": ["test/fixtures/rugpull-server.mjs"]
+    },
+    "high-risk-tools": {
+      "command": "node",
+      "args": ["test/fixtures/high-risk-server.mjs"]
+    }
+  },
+  "policies": {
+    "rateLimit": {
+      "maxCallsPerMinute": 60
+    },
+    "security": {
+      "scanDescriptions": true,
+      "blockOnCritical": true,
+      "blockOnHigh": true
+    }
+  },
+  "audit": {
+    "enabled": true,
+    "logPath": "./mcp-sentinel-audit.jsonl"
+  },
+  "sentinel": {
+    "risk": {
+      "thresholds": {
+        "monitor": 26,
+        "restrict": 51,
+        "approval": 76,
+        "quarantine": 91
+      }
+    }
+  }
+}
