@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, dirname, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readdirSync } from "node:fs";
 import { Command } from "commander";
@@ -30,6 +30,7 @@ program
   .action(async (opts) => {
     try {
       const configPath = resolve(opts.config);
+      const configDir = dirname(configPath);
       const raw = await readFile(configPath, "utf-8");
       let config: GatewayConfig;
       try {
@@ -49,6 +50,22 @@ program
           process.stderr.write(`Error: Server "${name}" needs either command or url\n`);
           process.exit(1);
         }
+        if (srv.args) {
+          srv.args = srv.args.map((arg) => {
+            if (
+              typeof arg === "string" &&
+              (arg.endsWith(".mjs") || arg.endsWith(".js") || arg.endsWith(".ts")) &&
+              !isAbsolute(arg)
+            ) {
+              return resolve(configDir, arg);
+            }
+            return arg;
+          });
+        }
+      }
+
+      if (config.audit?.logPath && !isAbsolute(config.audit.logPath)) {
+        config.audit.logPath = resolve(configDir, config.audit.logPath);
       }
 
       // Check for Sentinel configuration

@@ -87,6 +87,13 @@ export class ContextualSecurityEngine {
   }
 
   /**
+   * Returns a workflow's execution context by its ID.
+   */
+  getWorkflow(workflowId: string): WorkflowExecutionContext | undefined {
+    return this.workflows.get(workflowId);
+  }
+
+  /**
    * Resolves a tool's capability profile from custom or default registries.
    */
   getToolProfile(toolName: string): ToolCapabilityProfile {
@@ -259,8 +266,7 @@ export class ContextualSecurityEngine {
     decision: "allow" | "block" | "require-approval",
     riskScore: number,
   ): void {
-    const workflow = this.workflows.get(workflowId);
-    if (!workflow) return;
+    const workflow = this.getOrCreateWorkflowContext(workflowId, "system", "agent");
 
     const profile = this.getToolProfile(toolName);
     const record: ToolCallRecord = {

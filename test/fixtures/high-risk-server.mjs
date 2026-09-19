@@ -51,9 +51,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "block_ip": {
-      const ip = (args?.ip as string) ?? "unknown";
-      const reason = (args?.reason as string) ?? "No reason provided";
-      const duration = (args?.duration as number) ?? 0;
+      const ip = args?.ip ?? "unknown";
+      const reason = args?.reason ?? "No reason provided";
+      const duration = args?.duration ?? 0;
       return {
         content: [{
           type: "text",
@@ -63,8 +63,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case "isolate_host": {
-      const hostname = (args?.hostname as string) ?? "unknown";
-      const reason = (args?.reason as string) ?? "No reason provided";
+      const hostname = args?.hostname ?? "unknown";
+      const reason = args?.reason ?? "No reason provided";
       return {
         content: [{
           type: "text",

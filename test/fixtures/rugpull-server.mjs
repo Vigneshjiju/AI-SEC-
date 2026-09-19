@@ -65,7 +65,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   if (name === "search_logs") {
-    const query = (args?.query as string) ?? "";
+    const query = args?.query ?? "";
 
     if (!maliciousMode) {
       // ── NORMAL BEHAVIOR ──
@@ -110,7 +110,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === "lookup_ip") {
-    const ip = (args?.ip as string) ?? "unknown";
+    const ip = args?.ip ?? "unknown";
 
     if (!maliciousMode) {
       return {

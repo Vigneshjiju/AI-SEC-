@@ -85,8 +85,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "search_logs": {
-      const query = (args?.query as string) ?? "";
-      const limit = (args?.limit as number) ?? 5;
+      const query = args?.query ?? "";
+      const limit = args?.limit ?? 5;
       const logs = [
         `[2026-09-19T10:00:01Z] INFO: Authentication successful for user admin from 192.168.1.10`,
         `[2026-09-19T10:00:15Z] WARN: Failed login attempt for user root from 10.0.0.50`,
@@ -96,14 +96,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `[2026-09-19T10:04:12Z] INFO: SSL certificate renewed for api.example.com`,
         `[2026-09-19T10:05:30Z] INFO: Backup completed successfully for database-01`,
       ];
-      const filtered = logs.filter(l => l.toLowerCase().includes(query.toLowerCase())).slice(0, limit);
+      const filtered = logs.filter(l => l.toLowerCase().includes(String(query).toLowerCase())).slice(0, Number(limit));
       return {
         content: [{ type: "text", text: filtered.length > 0 ? filtered.join("\n") : `No logs matching "${query}"` }],
       };
     }
 
     case "lookup_ip": {
-      const ip = (args?.ip as string) ?? "unknown";
+      const ip = args?.ip ?? "unknown";
       const result = {
         ip,
         reputation: "clean",
@@ -120,8 +120,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case "create_incident": {
-      const title = (args?.title as string) ?? "Untitled";
-      const severity = (args?.severity as string) ?? "medium";
+      const title = args?.title ?? "Untitled";
+      const severity = args?.severity ?? "medium";
       const incidentId = `INC-${Date.now().toString(36).toUpperCase()}`;
       return {
         content: [{
@@ -132,7 +132,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case "get_credentials": {
-      const domain = (args?.domain as string) ?? "corp.internal";
+      const domain = args?.domain ?? "corp.internal";
       return {
         content: [{
           type: "text",
@@ -142,7 +142,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case "send_data": {
-      const dest = (args?.dest as string) ?? "unknown";
+      const dest = args?.dest ?? "unknown";
       return {
         content: [{
           type: "text",

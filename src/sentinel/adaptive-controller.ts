@@ -324,7 +324,7 @@ export class AdaptiveController {
           : [reason],
         previousTools: contextualResult?.workflowContext
           ? contextualResult.workflowContext.toolCallHistory.map((t) => t.toolName)
-          : [],
+          : (ctx.workflowId ? this.contextualEngine.getWorkflow(ctx.workflowId)?.toolCallHistory.map((t) => t.toolName) ?? [] : []),
         capabilityTransitions: contextualResult?.capabilityTransition
           ? [{ from: contextualResult.capabilityTransition.fromCapability, to: contextualResult.capabilityTransition.toCapability }]
           : [{ to: toolProf.primaryCapability }],
