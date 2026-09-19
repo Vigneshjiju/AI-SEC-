@@ -46,6 +46,14 @@ export interface ToolRegistration {
   state: ToolState;
   callCount: number;
   lastCalledAt: string | null;
+  /** Upstream-declared behavioural hints from the MCP tool descriptor. */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+  };
+  /** Findings from the Semantic Change Firewall, if this tool's contract mutated. */
+  semanticChanges?: SemanticChangeFinding[];
 }
 
 // ── Capability Model ──
@@ -272,6 +280,16 @@ export interface SentinelConfig {
       margin: number;
       cooldownMs: number;
     };
+    /**
+     * Risk is a persistent, stateful property of an entity — not a per-call snapshot.
+     * `halfLifeMs` controls how fast carried-over risk decays when behaviour is clean.
+     * `accumulation` controls how much repeated bad behaviour compounds on top of
+     * already-elevated risk (0 = no compounding, 1 = full additive stacking).
+     */
+    decay: {
+      halfLifeMs: number;
+      accumulation: number;
+    };
   };
   behavior: {
     networkChangeWeight: number;
@@ -297,6 +315,7 @@ export function defaultSentinelConfig(): SentinelConfig {
       thresholds: { monitor: 26, restrict: 51, approval: 76, quarantine: 91 },
       weights: { integrity: 15, behavior: 25, runtime: 20, authorization: 15, sensitivity: 10, anomaly: 15 },
       hysteresis: { margin: 5, cooldownMs: 30000 },
+      decay: { halfLifeMs: 120_000, accumulation: 0.35 },
     },
     behavior: {
       networkChangeWeight: 30,
@@ -316,6 +335,36 @@ export function defaultSentinelConfig(): SentinelConfig {
     },
   };
 }
+
+/**
+ * Deep-merges a partial user config over the defaults.
+ *
+ * A shallow spread is NOT safe here: a config that supplies only
+ * `risk.thresholds` (as `mcp-sentinel.json` does) would otherwise replace the
+ * whole `risk` object, leaving `weights` and `hysteresis` undefined — which
+ * produces NaN risk scores and throws when the state machine destructures
+ * hysteresis. Every nested section falls back to its default.
+ */
+export function mergeSentinelConfig(partial?: DeepPartial<SentinelConfig>): SentinelConfig {
+  const base = defaultSentinelConfig();
+  if (!partial) return base;
+
+  return {
+    risk: {
+      thresholds: { ...base.risk.thresholds, ...partial.risk?.thresholds },
+      weights: { ...base.risk.weights, ...partial.risk?.weights },
+      hysteresis: { ...base.risk.hysteresis, ...partial.risk?.hysteresis },
+      decay: { ...base.risk.decay, ...partial.risk?.decay },
+    },
+    behavior: { ...base.behavior, ...partial.behavior },
+    runtime: { ...base.runtime, ...partial.runtime },
+    auth: { ...base.auth, ...partial.auth },
+  };
+}
+
+export type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
+};
 
 // ── Runtime Events ──
 

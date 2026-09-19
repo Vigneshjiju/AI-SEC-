@@ -89,22 +89,28 @@ export class BehaviorEngine {
     const fingerprint = createEmptyFingerprint(toolId);
     fingerprint.avgResponseTimeMs = responseTimeMs;
 
-    // Extract filesystem patterns
-    for (const pattern of FILESYSTEM_PATTERNS) {
-      const matches = outputText.match(pattern) ?? [];
-      for (const m of matches) {
-        if (!fingerprint.filesystem.includes(m)) {
-          fingerprint.filesystem.push(m);
-        }
-      }
-    }
-
-    // Extract network patterns
+    // Extract network patterns first, then blank URLs out of the text before
+    // scanning for filesystem paths. The Unix-path pattern would otherwise match
+    // the `//host/path` tail of every URL and report `https://evil.example/exfil`
+    // as filesystem access — a wrong finding on the exact evidence an operator
+    // is being asked to act on.
     for (const pattern of NETWORK_PATTERNS) {
       const matches = outputText.match(pattern) ?? [];
       for (const m of matches) {
         if (!fingerprint.network.includes(m)) {
           fingerprint.network.push(m);
+        }
+      }
+    }
+
+    const textWithoutUrls = outputText.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)]+/gi, " ");
+
+    // Extract filesystem patterns
+    for (const pattern of FILESYSTEM_PATTERNS) {
+      const matches = textWithoutUrls.match(pattern) ?? [];
+      for (const m of matches) {
+        if (!fingerprint.filesystem.includes(m)) {
+          fingerprint.filesystem.push(m);
         }
       }
     }
@@ -311,4 +317,99 @@ export class BehaviorEngine {
 
     return findings;
   }
+
+  /**
+   * Determines which observed capabilities exceed what the tool is authorized for.
+   *
+   * Compares semantically rather than by string equality: a private-range address
+   * is not "external network", and a concrete host is only unauthorized when the
+   * tool either declared no network capability at all or published an allowlist
+   * this host is absent from. String comparison flagged every concrete
+   * observation against every generic declaration, which made the violation
+   * column meaningless.
+   */
+  assessConformance(
+    observed: BehaviorFingerprint,
+    authorized: CapabilitySet,
+  ): { violations: string[]; reasons: string[] } {
+    const violations: string[] = [];
+    const reasons: string[] = [];
+
+    // ── Network ──
+    for (const host of observed.network) {
+      if (!isExternalDestination(host)) continue;
+      if (!authorized.externalNetwork) {
+        violations.push(`net:${host}`);
+        reasons.push(`Contacted external destination "${host}" without authorized external network capability`);
+        continue;
+      }
+      const allowlist = authorized.network;
+      if (allowlist.length > 0 && !allowlist.some((allowed) => host.includes(allowed))) {
+        violations.push(`net:${host}`);
+        reasons.push(`Contacted "${host}", which is outside the declared destination allowlist`);
+      }
+    }
+
+    // ── Filesystem ──
+    // "*" means the tool declared filesystem access without naming a scope.
+    const wildcardScope = authorized.filesystem.includes("*");
+    const declaredPaths = wildcardScope ? [] : authorized.filesystem;
+    const declaresFilesystem = authorized.filesystem.length > 0;
+    for (const path of observed.filesystem) {
+      const sensitive = SENSITIVE_FILE_PATTERNS.some((p) => {
+        p.lastIndex = 0;
+        return p.test(path);
+      });
+
+      if (sensitive && !authorized.sensitiveFileAccess) {
+        violations.push(`fs:${path}`);
+        reasons.push(`Accessed sensitive path "${path}" without authorized sensitive-file capability`);
+        continue;
+      }
+      if (!declaresFilesystem) {
+        violations.push(`fs:${path}`);
+        reasons.push(`Accessed "${path}" although the tool declares no filesystem capability`);
+        continue;
+      }
+      if (declaredPaths.length > 0 && !declaredPaths.some((prefix) => path.startsWith(prefix))) {
+        violations.push(`fs:${path}`);
+        reasons.push(`Accessed "${path}", outside the declared filesystem scope`);
+      }
+    }
+
+    // ── Boolean capabilities ──
+    if (observed.envAccess && !authorized.envAccess) {
+      violations.push("env_access");
+      reasons.push("Read environment variables without an authorized environment capability");
+    }
+    if (observed.commandExecution && !authorized.commandExecution) {
+      violations.push("command_execution");
+      reasons.push("Executed commands without an authorized command-execution capability");
+    }
+    if (observed.externalNetwork && !authorized.externalNetwork) {
+      violations.push("external_network");
+      reasons.push("Opened an external network connection without an authorized network capability");
+    }
+    if (observed.sensitiveFileAccess && !authorized.sensitiveFileAccess) {
+      violations.push("sensitive_files");
+      reasons.push("Touched sensitive material without an authorized sensitive-file capability");
+    }
+    for (const proc of observed.processes) {
+      if (!authorized.commandExecution) violations.push(`proc:${proc}`);
+    }
+
+    return { violations: Array.from(new Set(violations)), reasons };
+  }
+}
+
+/** Private, loopback and link-local destinations are not external egress. */
+function isExternalDestination(host: string): boolean {
+  const value = host.toLowerCase();
+  if (/localhost|127\.|0\.0\.0\.0|::1/.test(value)) return false;
+  if (/(^|\/\/)10\./.test(value)) return false;
+  if (/(^|\/\/)192\.168\./.test(value)) return false;
+  if (/(^|\/\/)172\.(1[6-9]|2\d|3[01])\./.test(value)) return false;
+  if (/(^|\/\/)169\.254\./.test(value)) return false;
+  if (/\.(internal|local|corp)\b/.test(value)) return false;
+  return true;
 }

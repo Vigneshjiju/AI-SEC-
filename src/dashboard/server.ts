@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AdaptiveController } from "../sentinel/adaptive-controller.js";
+import type { ScenarioEngine, ScenarioStepResult, ScenarioRunResult } from "../sentinel/scenario-engine.js";
+import type { SecurityEvent, CapabilitySet, BehaviorFingerprint } from "../sentinel/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -15,6 +17,12 @@ export interface DashboardOptions {
   };
   getSentinel?: () => AdaptiveController | null;
   sentinel?: AdaptiveController | null;
+  scenarioEngine?: ScenarioEngine | null;
+}
+
+export interface DashboardHandle {
+  port: number;
+  close: () => Promise<void>;
 }
 
 function parseBody(req: IncomingMessage): Promise<any> {
@@ -34,16 +42,113 @@ function parseBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-function sendJson(res: ServerResponse, status: number, data: any) {
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json");
+function setCors(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
+function sendJson(res: ServerResponse, status: number, data: unknown) {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  setCors(res);
   res.end(JSON.stringify(data));
 }
 
-export async function startDashboard(opts: DashboardOptions): Promise<void> {
+// ── Presentation helpers (computed server-side so the UI stays a pure view) ──
+
+function capabilitySetToTags(caps: CapabilitySet | null | undefined): string[] {
+  if (!caps) return [];
+  const tags: string[] = [];
+  for (const path of caps.filesystem) tags.push(`fs:${path}`);
+  for (const host of caps.network) tags.push(`net:${host}`);
+  for (const proc of caps.processes) tags.push(`proc:${proc}`);
+  if (caps.envAccess) tags.push("env_access");
+  if (caps.externalNetwork) tags.push("external_network");
+  if (caps.sensitiveFileAccess) tags.push("sensitive_files");
+  if (caps.commandExecution) tags.push("command_execution");
+  return tags;
+}
+
+function fingerprintToTags(fp: BehaviorFingerprint | null | undefined): string[] {
+  if (!fp) return [];
+  const tags: string[] = [];
+  for (const path of fp.filesystem.slice(0, 6)) tags.push(`fs:${path}`);
+  for (const host of fp.network.slice(0, 6)) tags.push(`net:${host}`);
+  for (const proc of fp.processes.slice(0, 4)) tags.push(`proc:${proc}`);
+  if (fp.envAccess) tags.push("env_access");
+  if (fp.externalNetwork) tags.push("external_network");
+  if (fp.sensitiveFileAccess) tags.push("sensitive_files");
+  if (fp.commandExecution) tags.push("command_execution");
+  return tags;
+}
+
+/**
+ * Builds the tool view the dashboard renders.
+ *
+ * Observed capability is deliberately reported as an empty list when no
+ * fingerprint exists yet. Falling back to the declared set (as an earlier
+ * version did) shows operators "observed" capabilities that were never
+ * observed, which is precisely the claim this product exists to disprove.
+ */
+function buildToolView(sentinel: AdaptiveController) {
+  return sentinel.registry.getAllTools().map((tool) => {
+    const server = sentinel.registry.getServer(tool.serverId);
+    const declaredTags = capabilitySetToTags(tool.declaredCapabilities);
+    const authorizedTags = capabilitySetToTags(tool.authorizedCapabilities);
+    const observedTags = fingerprintToTags(tool.currentFingerprint);
+
+    const driftFindings =
+      tool.currentFingerprint && tool.baselineFingerprint
+        ? sentinel.behaviorEngine.compareFingerprint(
+            tool.baselineFingerprint,
+            tool.currentFingerprint,
+            tool.declaredCapabilities,
+            tool.authorizedCapabilities,
+          )
+        : [];
+
+    // Semantic comparison — not tag string equality. A private-range host is
+    // not external egress, and "*" scope means declared-but-unconstrained.
+    const conformance = tool.currentFingerprint
+      ? sentinel.behaviorEngine.assessConformance(tool.currentFingerprint, tool.authorizedCapabilities)
+      : { violations: [], reasons: [] };
+
+    return {
+      toolId: tool.toolId,
+      toolName: tool.toolName,
+      serverId: tool.serverId,
+      serverName: server?.serverName ?? "unknown",
+      description: tool.description,
+      riskScore: tool.riskScore,
+      state: tool.state,
+      callCount: tool.callCount,
+      lastCalledAt: tool.lastCalledAt,
+      criticality: tool.criticality,
+      sensitivity: tool.sensitivity,
+      annotations: tool.annotations ?? null,
+      hasBaseline: tool.baselineFingerprint !== null,
+      declaredCapabilities: declaredTags,
+      authorizedCapabilities: authorizedTags,
+      observedCapabilities: observedTags,
+      unauthorizedCapabilities: conformance.violations,
+      conformanceReasons: conformance.reasons,
+      hasDrift: driftFindings.length > 0,
+      driftFindings,
+      semanticChanges: tool.semanticChanges ?? [],
+    };
+  });
+}
+
+function buildServerView(sentinel: AdaptiveController) {
+  return sentinel.registry.getAllServers().map((s) => ({
+    ...s,
+    quarantined: sentinel.registry.isQuarantined(s.serverId),
+    toolCount: s.toolIds.length,
+  }));
+}
+
+export async function startDashboard(opts: DashboardOptions): Promise<DashboardHandle> {
   const htmlPath = resolve(__dirname, "index.html");
   let htmlContent: string;
 
@@ -54,21 +159,169 @@ export async function startDashboard(opts: DashboardOptions): Promise<void> {
     htmlContent = await readFile(srcHtmlPath, "utf-8");
   }
 
+  // ── Server-Sent Events fan-out ──
+  const sseClients = new Set<ServerResponse>();
+
+  function broadcast(type: string, payload: unknown) {
+    const frame = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const client of sseClients) {
+      try {
+        client.write(frame);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+  }
+
+  const resolveSentinel = () => opts.sentinel ?? (opts.getSentinel ? opts.getSentinel() : null);
+
+  // Subscribe once to the live security event bus. Every decision the control
+  // plane makes is pushed to connected dashboards immediately rather than
+  // waiting for the next poll tick.
+  let subscribedTo: AdaptiveController | null = null;
+  function ensureSubscribed() {
+    const sentinel = resolveSentinel();
+    if (!sentinel || sentinel === subscribedTo) return sentinel;
+    sentinel.eventBus.on("*", (event: SecurityEvent) => {
+      broadcast("security-event", event);
+      broadcast("overview", sentinel.getSystemOverview());
+    });
+    subscribedTo = sentinel;
+    return sentinel;
+  }
+  ensureSubscribed();
+
+  if (opts.scenarioEngine) {
+    opts.scenarioEngine.onStep((step: ScenarioStepResult) => broadcast("scenario-step", step));
+    opts.scenarioEngine.onRunComplete((run: ScenarioRunResult) => broadcast("scenario-complete", run));
+  }
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${opts.port}`);
 
     if (req.method === "OPTIONS") {
       res.statusCode = 204;
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      setCors(res);
       res.end();
       return;
     }
 
-    const sentinel = opts.sentinel ?? (opts.getSentinel ? opts.getSentinel() : null);
+    const sentinel = ensureSubscribed();
+    const scenarioEngine = opts.scenarioEngine ?? null;
 
-    // ── Existing Status Endpoint (Preserved + Extended) ──
+    // ══════════════════════════════════════════════
+    // LIVE EVENT STREAM (SSE)
+    // ══════════════════════════════════════════════
+    if (url.pathname === "/api/sentinel/stream" || url.pathname === "/api/stream") {
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      setCors(res);
+      res.write(": connected\n\n");
+
+      if (sentinel) {
+        res.write(`event: overview\ndata: ${JSON.stringify(sentinel.getSystemOverview())}\n\n`);
+      }
+
+      sseClients.add(res);
+
+      // Keep intermediaries from closing an idle stream.
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(": ping\n\n");
+        } catch {
+          clearInterval(heartbeat);
+          sseClients.delete(res);
+        }
+      }, 15000);
+
+      req.on("close", () => {
+        clearInterval(heartbeat);
+        sseClients.delete(res);
+      });
+      return;
+    }
+
+    // ══════════════════════════════════════════════
+    // SCENARIO CONTROL
+    // ══════════════════════════════════════════════
+    if (url.pathname === "/api/sentinel/scenarios" || url.pathname === "/api/scenarios") {
+      if (!scenarioEngine) {
+        sendJson(res, 200, { scenarios: [], available: false });
+        return;
+      }
+      sendJson(res, 200, {
+        available: true,
+        running: scenarioEngine.isRunning(),
+        lastRun: scenarioEngine.getLastRun(),
+        scenarios: scenarioEngine.listScenarios(),
+      });
+      return;
+    }
+
+    const scenarioDetail = url.pathname.match(/^\/api\/(?:sentinel\/)?scenarios\/([^/]+)$/);
+    if (scenarioDetail && req.method === "GET") {
+      if (!scenarioEngine) {
+        sendJson(res, 400, { error: "Scenario engine not enabled" });
+        return;
+      }
+      const scenario = scenarioEngine.getScenario(scenarioDetail[1]);
+      if (!scenario) {
+        sendJson(res, 404, { error: `Unknown scenario "${scenarioDetail[1]}"` });
+        return;
+      }
+      sendJson(res, 200, scenario);
+      return;
+    }
+
+    const scenarioRun = url.pathname.match(/^\/api\/(?:sentinel\/)?scenarios\/([^/]+)\/run$/);
+    if (scenarioRun && req.method === "POST") {
+      if (!scenarioEngine) {
+        sendJson(res, 400, { error: "Scenario engine not enabled" });
+        return;
+      }
+      if (scenarioEngine.isRunning()) {
+        sendJson(res, 409, { error: "A scenario is already running" });
+        return;
+      }
+      const scenarioId = scenarioRun[1];
+      if (!scenarioEngine.getScenario(scenarioId)) {
+        sendJson(res, 404, { error: `Unknown scenario "${scenarioId}"` });
+        return;
+      }
+
+      // Respond immediately; progress arrives over the SSE stream.
+      sendJson(res, 202, { started: true, scenarioId });
+      scenarioEngine.run(scenarioId).catch((err) => {
+        broadcast("scenario-error", {
+          scenarioId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      return;
+    }
+
+    if (
+      (url.pathname === "/api/sentinel/scenarios/reset" || url.pathname === "/api/scenarios/reset") &&
+      req.method === "POST"
+    ) {
+      if (!scenarioEngine) {
+        sendJson(res, 400, { error: "Scenario engine not enabled" });
+        return;
+      }
+      await scenarioEngine.reset();
+      broadcast("reset", { timestamp: new Date().toISOString() });
+      if (sentinel) broadcast("overview", sentinel.getSystemOverview());
+      sendJson(res, 200, { success: true, message: "Control plane reset to a clean baseline" });
+      return;
+    }
+
+    // ══════════════════════════════════════════════
+    // TELEMETRY
+    // ══════════════════════════════════════════════
+
     if (url.pathname === "/api/status") {
       try {
         const logContent = await readFile(opts.auditLogPath, "utf-8").catch(() => "");
@@ -86,230 +339,242 @@ export async function startDashboard(opts: DashboardOptions): Promise<void> {
           .filter(Boolean);
 
         const status = opts.getStatus();
-        const overview = sentinel ? sentinel.getSystemOverview() : null;
-
         sendJson(res, 200, {
           entries,
           servers: status.servers,
           rateLimits: status.rateLimits,
-          sentinel: overview,
+          sentinel: sentinel ? sentinel.getSystemOverview() : null,
         });
-      } catch (err) {
+      } catch {
         sendJson(res, 500, { error: "Failed to read audit log" });
       }
       return;
     }
 
-    // ── Sentinel System State Overview ──
     if (url.pathname === "/api/sentinel/state" || url.pathname === "/api/state") {
-      if (!sentinel) {
-        sendJson(res, 200, { status: "Sentinel not enabled" });
-        return;
-      }
-      sendJson(res, 200, sentinel.getSystemOverview());
+      sendJson(res, 200, sentinel ? sentinel.getSystemOverview() : { status: "Sentinel not enabled" });
       return;
     }
 
-    // ── Sentinel Server Registry ──
     if (url.pathname === "/api/sentinel/servers" || url.pathname === "/api/servers") {
-      if (!sentinel) {
-        sendJson(res, 200, []);
-        return;
-      }
-      const servers = sentinel.registry.getAllServers();
-      sendJson(res, 200, servers);
+      sendJson(res, 200, sentinel ? buildServerView(sentinel) : []);
       return;
     }
 
-    // ── Sentinel Tool Registry ──
     if (url.pathname === "/api/sentinel/tools" || url.pathname === "/api/tools") {
-      if (!sentinel) {
-        sendJson(res, 200, []);
-        return;
-      }
-      const tools = sentinel.registry.getAllTools();
-      sendJson(res, 200, tools);
+      sendJson(res, 200, sentinel ? buildToolView(sentinel) : []);
       return;
     }
 
-    // ── Sentinel Security Events Feed ──
     if (url.pathname === "/api/sentinel/events" || url.pathname === "/api/events") {
       if (!sentinel) {
         sendJson(res, 200, []);
         return;
       }
-      const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
-      const events = sentinel.eventBus.getEvents(limit);
-      sendJson(res, 200, events);
+      const limit = parseInt(url.searchParams.get("limit") ?? "100", 10);
+      sendJson(res, 200, sentinel.eventBus.getEvents(limit));
       return;
     }
 
-    // ── Sentinel Timeline ──
     if (url.pathname === "/api/sentinel/timeline" || url.pathname === "/api/timeline") {
       if (!sentinel) {
         sendJson(res, 200, []);
         return;
       }
-      const events = sentinel.eventBus.getEvents(200);
-      const timeline = events.map((e) => ({
-        id: e.id,
-        timestamp: e.timestamp,
-        server: e.serverName,
-        tool: e.toolName,
-        type: e.type,
-        riskScore: e.riskScore,
-        state: e.securityState,
-        decision: e.decision,
-        reasons: e.reasons,
-      }));
-      sendJson(res, 200, timeline);
+      sendJson(res, 200, sentinel.riskEngine.getTimeline(300));
       return;
     }
 
-    // ── Sentinel Pending Approvals ──
+    if (url.pathname === "/api/sentinel/transitions") {
+      sendJson(res, 200, sentinel ? sentinel.stateMachine.getTransitions(100) : []);
+      return;
+    }
+
+    if (url.pathname === "/api/sentinel/quarantines") {
+      sendJson(res, 200, sentinel ? sentinel.quarantineManager.getHistory() : []);
+      return;
+    }
+
     if (url.pathname === "/api/sentinel/approvals" || url.pathname === "/api/approvals") {
       if (!sentinel) {
         sendJson(res, 200, []);
         return;
       }
-      sendJson(res, 200, sentinel.policyEngine.getPendingApprovals());
+      sendJson(res, 200, url.searchParams.get("all") === "true"
+        ? sentinel.policyEngine.getAllApprovals()
+        : sentinel.policyEngine.getPendingApprovals());
       return;
     }
 
-    // ── Sentinel Decision Receipts Ledger ──
     if (url.pathname === "/api/sentinel/receipts" || url.pathname === "/api/receipts") {
-      if (!sentinel) {
-        sendJson(res, 200, []);
-        return;
-      }
-      sendJson(res, 200, sentinel.getReceiptsLedger().getAllReceipts());
+      sendJson(res, 200, sentinel ? sentinel.receiptsLedger.getAllReceipts() : []);
       return;
     }
 
-    // ── Sentinel Active Capability Leases ──
     if (url.pathname === "/api/sentinel/leases" || url.pathname === "/api/leases") {
+      sendJson(res, 200, sentinel ? sentinel.leaseManager.getActiveLeases() : []);
+      return;
+    }
+
+    if (url.pathname === "/api/sentinel/grants") {
+      if (!sentinel) {
+        sendJson(res, 200, { jit: [], approvals: [] });
+        return;
+      }
+      sendJson(res, 200, {
+        jit: sentinel.authManager.getAllActiveGrants(),
+        approvals: sentinel.policyEngine.getOpenGrants(),
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/sentinel/workflows") {
       if (!sentinel) {
         sendJson(res, 200, []);
         return;
       }
-      sendJson(res, 200, sentinel.getLeaseManager().getActiveLeases());
+      sendJson(res, 200, sentinel.contextualEngine.getAllWorkflows().map((w) => ({
+        workflowId: w.workflowId,
+        userId: w.userId,
+        agentId: w.agentId,
+        intent: w.intent,
+        capabilityHistory: w.capabilityHistory,
+        toolCallHistory: w.toolCallHistory.map((t) => ({
+          toolName: t.toolName,
+          server: t.server,
+          capability: t.capability,
+          decision: t.decision,
+          riskScore: t.riskScore,
+          timestamp: t.timestamp,
+        })),
+        riskScore: w.riskScore,
+        updatedAt: w.updatedAt,
+      })));
       return;
     }
 
-    // ── POST: Approve Request ──
+    // ══════════════════════════════════════════════
+    // CONTROL ACTIONS
+    // ══════════════════════════════════════════════
+
     const approveMatch = url.pathname.match(/^\/api\/(?:sentinel\/)?approvals?\/([^/]+)\/approve$/);
     if (approveMatch && req.method === "POST") {
       if (!sentinel) {
         sendJson(res, 400, { error: "Sentinel not enabled" });
         return;
       }
-      const id = approveMatch[1];
       const body = await parseBody(req);
-      const approvedBy = body.decidedBy || "admin";
-      const result = sentinel.policyEngine.approveRequest(id, approvedBy);
+      const result = sentinel.approveRequest(approveMatch[1], body.decidedBy || "operator");
       if (!result) {
-        sendJson(res, 404, { error: `Approval request ${id} not found or not pending` });
+        sendJson(res, 404, { error: `Approval request ${approveMatch[1]} not found or not pending` });
         return;
       }
       sendJson(res, 200, { success: true, approval: result });
       return;
     }
 
-    // ── POST: Deny Request ──
     const denyMatch = url.pathname.match(/^\/api\/(?:sentinel\/)?approvals?\/([^/]+)\/deny$/);
     if (denyMatch && req.method === "POST") {
       if (!sentinel) {
         sendJson(res, 400, { error: "Sentinel not enabled" });
         return;
       }
-      const id = denyMatch[1];
       const body = await parseBody(req);
-      const deniedBy = body.decidedBy || "admin";
-      const result = sentinel.policyEngine.denyRequest(id, deniedBy);
+      const result = sentinel.denyRequest(denyMatch[1], body.decidedBy || "operator");
       if (!result) {
-        sendJson(res, 404, { error: `Approval request ${id} not found or not pending` });
+        sendJson(res, 404, { error: `Approval request ${denyMatch[1]} not found or not pending` });
         return;
       }
       sendJson(res, 200, { success: true, approval: result });
       return;
     }
 
-    // ── POST: Quarantine Server ──
     const quarantineMatch = url.pathname.match(/^\/api\/(?:sentinel\/)?servers?\/([^/]+)\/quarantine$/);
     if (quarantineMatch && req.method === "POST") {
       if (!sentinel) {
         sendJson(res, 400, { error: "Sentinel not enabled" });
         return;
       }
-      const serverId = quarantineMatch[1];
       const body = await parseBody(req);
-      const reason = body.reason || "Manual quarantine triggered via dashboard";
       const record = sentinel.quarantineManager.quarantine(
-        serverId,
-        reason,
+        quarantineMatch[1],
+        body.reason || "Manual quarantine triggered from the dashboard",
         100,
-        [reason],
-        "manual_operator_action"
+        [body.reason || "Operator-initiated containment"],
+        "manual_operator_action",
       );
       if (!record) {
-        sendJson(res, 404, { error: `Server ${serverId} not found` });
+        sendJson(res, 404, { error: `Server ${quarantineMatch[1]} not found` });
         return;
       }
       sendJson(res, 200, { success: true, record });
       return;
     }
 
-    // ── POST: Recover Server ──
     const recoverMatch = url.pathname.match(/^\/api\/(?:sentinel\/)?servers?\/([^/]+)\/recover$/);
     if (recoverMatch && req.method === "POST") {
       if (!sentinel) {
         sendJson(res, 400, { error: "Sentinel not enabled" });
         return;
       }
-      const serverId = recoverMatch[1];
       const body = await parseBody(req);
-      const approvedBy = body.approvedBy || "admin";
-      const success = sentinel.quarantineManager.recover(serverId, approvedBy);
-      if (!success) {
-        sendJson(res, 400, { error: `Server ${serverId} is not quarantined or not found` });
+      const ok = sentinel.quarantineManager.recover(
+        recoverMatch[1],
+        body.approvedBy || "operator",
+        body.reason,
+      );
+      if (!ok) {
+        sendJson(res, 400, { error: `Server ${recoverMatch[1]} is not quarantined or not found` });
         return;
       }
-      sendJson(res, 200, { success: true, message: `Server ${serverId} recovered to MONITOR state` });
+      sendJson(res, 200, { success: true, message: `Server recovered to MONITOR state` });
       return;
     }
 
-    // ── POST: Demo Trigger Malicious Mode ──
-    if (
-      (url.pathname === "/api/sentinel/trigger-malicious" || url.pathname === "/api/trigger-malicious") &&
-      req.method === "POST"
-    ) {
+    if (url.pathname === "/api/sentinel/grants" && req.method === "POST") {
       if (!sentinel) {
         sendJson(res, 400, { error: "Sentinel not enabled" });
         return;
       }
       const body = await parseBody(req);
-      const serverName = body.serverName || "rugpull-server";
-      const active = body.active !== undefined ? Boolean(body.active) : true;
-      sentinel.setServerMaliciousMode(serverName, active);
-      process.env.MALICIOUS_MODE = active ? "true" : "false";
-
-      sendJson(res, 200, {
-        success: true,
-        serverName,
-        maliciousMode: active,
-        message: active
-          ? `Malicious rug-pull mode activated for ${serverName}`
-          : `Malicious mode deactivated for ${serverName}`,
-      });
+      const grant = sentinel.authManager.grantTemporaryPermission(
+        body.userId || "analyst1",
+        Array.isArray(body.permissions) ? body.permissions : [],
+        Number(body.ttlSeconds ?? 300),
+        body.reason || "Operator-issued elevation",
+      );
+      sendJson(res, 200, { success: true, grant });
       return;
     }
 
-    // ── Serve HTML Dashboard ──
-    res.setHeader("Content-Type", "text/html");
+    // ── Serve the dashboard ──
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(htmlContent);
   });
 
-  server.listen(opts.port, () => {
-    process.stderr.write(`[mcp-sentinel] Security Dashboard running at: http://localhost:${opts.port}\n`);
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(opts.port, () => {
+      server.off("error", rejectListen);
+      process.stderr.write(`[mcp-sentinel] Security Dashboard: http://localhost:${opts.port}\n`);
+      resolveListen();
+    });
   });
+
+  return {
+    port: opts.port,
+    close: () =>
+      new Promise<void>((resolveClose) => {
+        for (const client of sseClients) {
+          try {
+            client.end();
+          } catch {
+            /* already gone */
+          }
+        }
+        sseClients.clear();
+        server.close(() => resolveClose());
+      }),
+  };
 }

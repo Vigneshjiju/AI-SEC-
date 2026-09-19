@@ -21,9 +21,14 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/dashboard/index.html','dist/dashboard/index.html')\"",
     "test": "vitest run",
+    "test:unit": "vitest run tests/gateway.test.ts tests/sentinel.test.ts tests/control-plane.test.ts",
+    "test:integration": "vitest run tests/scenarios.test.ts",
+    "console": "tsx src/cli.ts console",
     "demo": "tsx test/demo.ts",
+    "demo:all": "tsx test/demo.ts --all",
+    "demo:live": "tsx test/demo.ts --dashboard",
     "evaluate": "tsx test/evaluation.ts",
     "sentinel": "tsx src/cli.ts start -c mcp-sentinel.json -d",
     "lint": "tsc --noEmit",

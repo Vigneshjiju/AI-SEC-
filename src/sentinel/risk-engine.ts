@@ -13,9 +13,15 @@ import type {
   BehaviorDriftFinding,
 } from "./types.js";
 
+interface RiskState {
+  score: number;
+  updatedAt: number;
+}
+
 export class RiskEngine {
   private config: SentinelConfig;
   private riskHistory: Map<string, RiskAssessment[]> = new Map();
+  private riskState: Map<string, RiskState> = new Map();
 
   constructor(config: SentinelConfig) {
     this.config = config;
@@ -24,6 +30,10 @@ export class RiskEngine {
   /**
    * Calculate risk score from evidence.
    * Returns a fully explainable RiskAssessment.
+   *
+   * Risk is persistent and stateful, not a per-call snapshot. A single clean
+   * call does not wipe out risk earned by prior malicious behaviour — carried
+   * risk decays on a configured half-life, and repeat offences compound.
    */
   assess(entityId: string, evidence: RiskEvidence): RiskAssessment {
     const weights = this.config.risk.weights;
@@ -107,14 +117,51 @@ export class RiskEngine {
       reasons.push("Suspicious output patterns detected");
     }
 
-    // ── Calculate total (bounded 0–100) ──
+    // ── Instantaneous score from this observation alone (bounded 0–100) ──
     const rawScore = Object.values(factors).reduce((sum, v) => sum + v, 0);
-    const score = Math.max(0, Math.min(100, Math.round(rawScore)));
+    const instantScore = Math.max(0, Math.min(100, Math.round(rawScore)));
 
-    // Get previous assessment
+    // ── Blend with persistent, time-decayed carried risk ──
+    const now = Date.now();
+    const prior = this.riskState.get(entityId);
+    const previousScore = prior?.score ?? 0;
+
+    const { halfLifeMs, accumulation } = this.config.risk.decay;
+    let carried = 0;
+    if (prior && previousScore > 0) {
+      const elapsed = Math.max(0, now - prior.updatedAt);
+      carried = halfLifeMs > 0
+        ? previousScore * Math.pow(0.5, elapsed / halfLifeMs)
+        : 0;
+
+      if (carried >= 1) {
+        reasons.push(
+          `Carried risk ${Math.round(carried)}/100 retained from prior observations ` +
+          `(decayed from ${previousScore} over ${(elapsed / 1000).toFixed(1)}s)`
+        );
+      }
+    }
+
+    // Risk never drops below what we are observing right now.
+    let blended = Math.max(instantScore, carried);
+
+    // Repeat offences compound: new bad evidence on top of already-elevated risk
+    // escalates rather than merely restating the same score.
+    if (instantScore > 0 && carried > 0) {
+      const compounded = instantScore * accumulation;
+      blended = Math.min(100, blended + compounded);
+      if (compounded >= 1) {
+        reasons.push(
+          `Repeat offence compounding: +${Math.round(compounded)} ` +
+          `(${Math.round(accumulation * 100)}% of current evidence stacked on elevated baseline)`
+        );
+      }
+    }
+
+    const score = Math.max(0, Math.min(100, Math.round(blended)));
+    this.riskState.set(entityId, { score, updatedAt: now });
+
     const history = this.riskHistory.get(entityId) ?? [];
-    const previous = history.length > 0 ? history[history.length - 1] : null;
-    const previousScore = previous?.score ?? 0;
 
     const assessment: RiskAssessment = {
       score,
@@ -155,6 +202,32 @@ export class RiskEngine {
     if (score >= t.restrict) return "RESTRICT";
     if (score >= t.monitor) return "MONITOR";
     return "NORMAL";
+  }
+
+  /**
+   * Current persistent (decayed) risk for an entity without recording an assessment.
+   */
+  getCurrentRisk(entityId: string): number {
+    const prior = this.riskState.get(entityId);
+    if (!prior) return 0;
+    const { halfLifeMs } = this.config.risk.decay;
+    if (halfLifeMs <= 0) return 0;
+    const elapsed = Math.max(0, Date.now() - prior.updatedAt);
+    return Math.round(prior.score * Math.pow(0.5, elapsed / halfLifeMs));
+  }
+
+  /**
+   * Clear all accumulated risk state and history.
+   * Used by the scenario engine when resetting to a clean baseline.
+   */
+  reset(entityId?: string): void {
+    if (entityId) {
+      this.riskState.delete(entityId);
+      this.riskHistory.delete(entityId);
+      return;
+    }
+    this.riskState.clear();
+    this.riskHistory.clear();
   }
 
   /**

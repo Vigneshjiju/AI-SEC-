@@ -23,6 +23,71 @@ function generateId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${(++idCounter).toString(36)}`;
 }
 
+/**
+ * Derives the capability set a tool *claims* from its own descriptor.
+ *
+ * Without this, every tool registered through the live `tools/list` path gets an
+ * empty declared set, so the first legitimate URL or file path in any output
+ * registers as a capability mismatch. Reading the declaration out of the
+ * descriptor is what makes "declared vs observed" a meaningful comparison
+ * rather than "anything vs nothing".
+ */
+export function inferDeclaredCapabilities(
+  toolName: string,
+  description: string,
+  inputSchema?: unknown,
+): CapabilitySet {
+  const caps = createEmptyCapabilitySet();
+  const schemaText = inputSchema ? JSON.stringify(inputSchema) : "";
+  const haystack = `${toolName} ${description} ${schemaText}`.toLowerCase();
+
+  // Filesystem. Concrete paths named in the description become the declared
+  // scope; a generic mention sets the capability without an allowlist, which
+  // `assessConformance` reads as "filesystem allowed, scope unconstrained".
+  //
+  // URLs are blanked out first: the path regex matches the `//host/path` tail
+  // of a URL, and filtering the match for "://" never catches it because the
+  // scheme is not part of the match.
+  const descriptionWithoutUrls = description.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)]+/gi, " ");
+  const declaredPaths = descriptionWithoutUrls.match(/(?:\/[\w.*-]+){2,}/g) ?? [];
+  const mentionsFilesystem = /\b(file|path|directory|folder|log file|read from|write to)\b/.test(haystack);
+  if (declaredPaths.length > 0) {
+    caps.filesystem = Array.from(new Set(declaredPaths));
+  } else if (mentionsFilesystem) {
+    caps.filesystem = ["*"];
+  }
+
+  // Network
+  const declaredHosts = (description.match(/https?:\/\/[^\s"'<>)]+/g) ?? [])
+    .map((u) => {
+      try { return new URL(u).host; } catch { return u; }
+    });
+  if (declaredHosts.length > 0) {
+    caps.network = Array.from(new Set(declaredHosts));
+    caps.externalNetwork = true;
+  }
+  if (/\b(external endpoint|remote|http request|api call|upstream service|reputation|geolocation|whois|lookup)\b/.test(haystack)) {
+    caps.externalNetwork = true;
+  }
+
+  // Environment variables
+  if (/\b(environment variable|process\.env|env var|configuration variable)\b/.test(haystack)) {
+    caps.envAccess = true;
+  }
+
+  // Command / process execution
+  if (/\b(execute|command|shell|spawn|subprocess|run a process|terminal)\b/.test(haystack)) {
+    caps.commandExecution = true;
+  }
+
+  // Sensitive material
+  if (/\b(credential|secret|password|private key|api key|token|keychain)\b/.test(haystack)) {
+    caps.sensitiveFileAccess = true;
+  }
+
+  return caps;
+}
+
 export class ServerRegistry {
   private servers: Map<string, ServerRegistration> = new Map();
   private tools: Map<string, ToolRegistration> = new Map();
@@ -72,6 +137,7 @@ export class ServerRegistry {
     declaredCapabilities?: Partial<CapabilitySet>;
     criticality?: ToolRegistration["criticality"];
     sensitivity?: ToolRegistration["sensitivity"];
+    annotations?: ToolRegistration["annotations"];
   } = {}): ToolRegistration {
     const server = this.getServer(serverId);
     if (!server) throw new Error(`Server ${serverId} not found`);
@@ -84,18 +150,33 @@ export class ServerRegistry {
     if (existingId) {
       const tool = this.tools.get(existingId)!;
       tool.description = opts.description ?? tool.description;
+      if (opts.annotations) tool.annotations = opts.annotations;
       return tool;
     }
+
+    const description = opts.description ?? "";
+    // Explicitly supplied capabilities win; otherwise read the declaration out
+    // of the tool's own descriptor.
+    const declared = opts.declaredCapabilities
+      ? { ...createEmptyCapabilitySet(), ...opts.declaredCapabilities }
+      : inferDeclaredCapabilities(name, description, opts.inputSchema);
 
     const toolId = generateId("tool");
     const tool: ToolRegistration = {
       toolId,
       toolName: name,
       serverId,
-      description: opts.description ?? "",
-      inputSchema: opts.inputSchema ?? {},
-      declaredCapabilities: { ...createEmptyCapabilitySet(), ...opts.declaredCapabilities },
-      authorizedCapabilities: { ...createEmptyCapabilitySet(), ...opts.declaredCapabilities },
+      description,
+      inputSchema: opts.inputSchema ?? ({} as unknown),
+      declaredCapabilities: declared,
+      // Authorized starts as a copy of declared: a tool is permitted to do what
+      // it says it does, and nothing more. Operators narrow this via policy.
+      authorizedCapabilities: {
+        ...declared,
+        filesystem: [...declared.filesystem],
+        network: [...declared.network],
+        processes: [...declared.processes],
+      },
       baselineFingerprint: null,
       currentFingerprint: null,
       riskScore: 0,
@@ -104,11 +185,26 @@ export class ServerRegistry {
       state: "ACTIVE",
       callCount: 0,
       lastCalledAt: null,
+      annotations: opts.annotations,
     };
 
     this.tools.set(toolId, tool);
     server.toolIds.push(toolId);
     return tool;
+  }
+
+  /** Attaches Semantic Change Firewall findings to a tool's record. */
+  recordSemanticChanges(toolId: string, findings: ToolRegistration["semanticChanges"]): void {
+    const tool = this.tools.get(toolId);
+    if (!tool) return;
+    tool.semanticChanges = [...(tool.semanticChanges ?? []), ...(findings ?? [])];
+  }
+
+  /** Wipes all registered servers and tools (clean-baseline reset). */
+  clear(): void {
+    this.servers.clear();
+    this.tools.clear();
+    this.serversByName.clear();
   }
 
   setBaseline(toolId: string, fingerprint: BehaviorFingerprint): void {

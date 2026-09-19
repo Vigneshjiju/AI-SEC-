@@ -18,52 +18,7 @@ import {
   ToolCallRecord,
   DataClassification,
 } from "./types.js";
-
-// Standard capability mappings for demonstration and SOC tools
-const DEFAULT_CAPABILITY_PROFILES: Record<string, ToolCapabilityProfile> = {
-  search_logs: {
-    toolName: "search_logs",
-    primaryCapability: "READ",
-    riskTier: "LOW",
-    requiresApproval: false,
-    allowedNextCapabilities: ["READ", "EXTERNAL_LOOKUP", "WRITE"],
-  },
-  lookup_ip: {
-    toolName: "lookup_ip",
-    primaryCapability: "EXTERNAL_LOOKUP",
-    riskTier: "LOW",
-    requiresApproval: false,
-    allowedNextCapabilities: ["READ", "EXTERNAL_LOOKUP", "WRITE", "INFRASTRUCTURE_CONTROL"],
-  },
-  create_incident: {
-    toolName: "create_incident",
-    primaryCapability: "WRITE",
-    riskTier: "MEDIUM",
-    requiresApproval: false,
-    allowedNextCapabilities: ["READ", "EXTERNAL_LOOKUP", "INFRASTRUCTURE_CONTROL"],
-  },
-  get_credentials: {
-    toolName: "get_credentials",
-    primaryCapability: "SECRET_ACCESS",
-    riskTier: "CRITICAL",
-    requiresApproval: true,
-    allowedNextCapabilities: [], // Strictly guarded
-  },
-  send_data: {
-    toolName: "send_data",
-    primaryCapability: "DATA_TRANSFER",
-    riskTier: "HIGH",
-    requiresApproval: true,
-    allowedNextCapabilities: [],
-  },
-  isolate_host: {
-    toolName: "isolate_host",
-    primaryCapability: "INFRASTRUCTURE_CONTROL",
-    riskTier: "CRITICAL",
-    requiresApproval: true,
-    allowedNextCapabilities: ["CREATE_INCIDENT" as unknown as CapabilityType, "WRITE"],
-  },
-};
+import { classifyTool, stripServerPrefix } from "./capability-model.js";
 
 export interface ContextualEvaluationResult {
   action: "allow" | "restrict" | "block" | "require-approval";
@@ -93,50 +48,26 @@ export class ContextualSecurityEngine {
     return this.workflows.get(workflowId);
   }
 
+  /** All tracked workflows, most recently updated first. */
+  getAllWorkflows(): WorkflowExecutionContext[] {
+    return Array.from(this.workflows.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /** Clears workflow history (clean-baseline reset). */
+  reset(): void {
+    this.workflows.clear();
+  }
+
   /**
-   * Resolves a tool's capability profile from custom or default registries.
+   * Resolves a tool's capability profile from the custom registry, falling back
+   * to the shared capability model so authorization and sequence analysis always
+   * agree on what a tool does.
    */
-  getToolProfile(toolName: string): ToolCapabilityProfile {
-    const cleanName = toolName.includes("__") ? toolName.split("__")[1] : toolName;
+  getToolProfile(toolName: string, description?: string): ToolCapabilityProfile {
+    const cleanName = stripServerPrefix(toolName);
     const custom = this.customProfiles.get(cleanName.toLowerCase());
     if (custom) return custom;
-
-    const defaultProf = DEFAULT_CAPABILITY_PROFILES[cleanName.toLowerCase()];
-    if (defaultProf) return defaultProf;
-
-    // Fallback heuristic classification based on tool name
-    const lower = cleanName.toLowerCase();
-    let capability: CapabilityType = "UNKNOWN";
-    let riskTier: ToolCapabilityProfile["riskTier"] = "LOW";
-    let requiresApproval = false;
-
-    if (lower.includes("search") || lower.includes("get") || lower.includes("read") || lower.includes("list")) {
-      capability = lower.includes("cred") || lower.includes("key") || lower.includes("secret") ? "SECRET_ACCESS" : "READ";
-      riskTier = capability === "SECRET_ACCESS" ? "CRITICAL" : "LOW";
-      requiresApproval = capability === "SECRET_ACCESS";
-    } else if (lower.includes("send") || lower.includes("upload") || lower.includes("exfil") || lower.includes("post")) {
-      capability = "DATA_TRANSFER";
-      riskTier = "HIGH";
-      requiresApproval = true;
-    } else if (lower.includes("exec") || lower.includes("shell") || lower.includes("run") || lower.includes("cmd")) {
-      capability = "EXEC";
-      riskTier = "CRITICAL";
-      requiresApproval = true;
-    } else if (lower.includes("lookup") || lower.includes("dns") || lower.includes("whois")) {
-      capability = "EXTERNAL_LOOKUP";
-      riskTier = "LOW";
-    } else if (lower.includes("create") || lower.includes("update") || lower.includes("write")) {
-      capability = "WRITE";
-      riskTier = "MEDIUM";
-    }
-
-    return {
-      toolName: cleanName,
-      primaryCapability: capability,
-      riskTier,
-      requiresApproval,
-      allowedNextCapabilities: ["READ", "EXTERNAL_LOOKUP", "WRITE"],
-    };
+    return classifyTool(cleanName, description);
   }
 
   /**
@@ -232,8 +163,12 @@ export class ContextualSecurityEngine {
         intentAligned = false;
         isDangerousSequence = true;
         riskIncrement += 35;
-        action = "restrict";
-        reason = `Contextual Anomaly: Reconnaissance (EXTERNAL_LOOKUP) followed by credential theft (SECRET_ACCESS) in investigation workflow.`;
+        // Suspicious, but not irreversible: an incident responder can legitimately
+        // need credentials mid-investigation. Escalate to a human rather than
+        // hard-blocking. The irreversible step (external transfer) is what gets
+        // the hard block, below.
+        action = "require-approval";
+        reason = `Contextual Anomaly: Reconnaissance (EXTERNAL_LOOKUP) followed by credential access (SECRET_ACCESS) in an investigation workflow — human approval required.`;
       }
     }
 

@@ -120,6 +120,12 @@ export class SecurityStateMachine {
     return this.transitions.slice(-limit);
   }
 
+  /** Clears all tracked states and transition history. */
+  reset(): void {
+    this.states.clear();
+    this.transitions = [];
+  }
+
   private doTransition(
     entityId: string,
     from: SecurityState,

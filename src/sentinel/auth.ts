@@ -7,7 +7,18 @@
  * for Keycloak / OIDC integration.
  */
 
-import type { UserIdentity } from "./types.js";
+import type { UserIdentity, CapabilityType } from "./types.js";
+import { classifyTool, roleHasCapability, ROLE_CAPABILITIES } from "./capability-model.js";
+
+export { ROLE_CAPABILITIES };
+
+export interface AuthorizationCheck {
+  allowed: boolean;
+  reason?: string;
+  /** How the decision was reached — surfaced in the dashboard's explainability view. */
+  via?: "admin" | "jit-grant" | "role-permission" | "role-capability";
+  capability?: CapabilityType;
+}
 
 export interface TemporaryGrant {
   id: string;
@@ -155,48 +166,121 @@ export class AuthManager {
   }
 
   /**
-   * Check if a user has permission to execute a specific tool
+   * Check if a user may execute a specific tool.
+   *
+   * Authorization is resolved in four stages, most-specific first:
+   *   1. Admin / wildcard permission
+   *   2. Active Just-In-Time grant (by tool name or capability class)
+   *   3. Explicit named permission on the role
+   *   4. Capability-tier permission — lets the policy cover tools that were
+   *      never enumerated, which is the normal case for third-party MCP servers
    */
   public canExecuteTool(
     identity: UserIdentity,
     toolName: string,
-    sensitivity: "public" | "internal" | "confidential" | "restricted" = "internal"
-  ): { allowed: boolean; reason?: string } {
+    sensitivity: "public" | "internal" | "confidential" | "restricted" = "internal",
+    description?: string
+  ): AuthorizationCheck {
+    const profile = classifyTool(toolName, description);
+    const capability = profile.primaryCapability;
+
     if (identity.role === "admin" || identity.permissions.includes("*")) {
-      return { allowed: true };
+      return { allowed: true, via: "admin", capability };
     }
 
-    // Check active temporary JIT grants
+    // ── Just-In-Time grants (tool name or capability class) ──
     this.cleanExpiredGrants(identity.userId);
     const activeGrants = this.temporaryGrants.get(identity.userId) ?? [];
     for (const grant of activeGrants) {
-      if (grant.permissions.includes("*") || grant.permissions.includes(toolName)) {
-        return { allowed: true };
+      if (
+        grant.permissions.includes("*") ||
+        grant.permissions.includes(toolName) ||
+        grant.permissions.includes(profile.toolName) ||
+        grant.permissions.includes(capability)
+      ) {
+        return { allowed: true, via: "jit-grant", capability };
       }
     }
 
-    // Check role permissions
-    const toolNormalized = toolName.toLowerCase();
+    // ── Explicit named permission ──
+    const toolNormalized = profile.toolName.toLowerCase();
     const hasRolePermission = identity.permissions.some(
       (p) => p.toLowerCase() === toolNormalized || p === "*"
     );
-
-    if (!hasRolePermission) {
-      return {
-        allowed: false,
-        reason: `Role '${identity.role}' does not have permission for tool '${toolName}'`,
-      };
+    if (hasRolePermission) {
+      if (sensitivity === "restricted" && identity.role === "viewer") {
+        return {
+          allowed: false,
+          reason:
+            `Tool '${profile.toolName}' is classified sensitivity 'restricted', ` +
+            `which requires analyst or higher (role '${identity.role}')`,
+          capability,
+        };
+      }
+      return { allowed: true, via: "role-permission", capability };
     }
 
-    // Sensitive resource tier checks
-    if (sensitivity === "restricted" && identity.role !== "incident_responder") {
-      return {
-        allowed: false,
-        reason: `Tool '${toolName}' has sensitivity 'restricted' which requires incident_responder or admin role`,
-      };
+    // ── Capability-tier permission ──
+    if (roleHasCapability(identity.role, capability)) {
+      if (sensitivity === "restricted" && identity.role === "viewer") {
+        return {
+          allowed: false,
+          reason:
+            `Tool '${profile.toolName}' is classified sensitivity 'restricted', ` +
+            `which requires analyst or higher (role '${identity.role}')`,
+          capability,
+        };
+      }
+      return { allowed: true, via: "role-capability", capability };
     }
 
-    return { allowed: true };
+    return {
+      allowed: false,
+      reason:
+        `Role '${identity.role}' is not authorized for capability class ` +
+        `'${capability}' required by tool '${profile.toolName}'`,
+      capability,
+    };
+  }
+
+  /**
+   * Resolve a role name into a full identity without needing a token.
+   * Used by the gateway, which carries a role on the request context.
+   */
+  public identityForRole(userId: string, role: string): UserIdentity {
+    const validRole = (["viewer", "analyst", "incident_responder", "admin"].includes(role)
+      ? role
+      : this.defaultRole) as UserIdentity["role"];
+
+    const existing = this.knownUsers.get(userId);
+    if (existing && existing.role === validRole) return existing;
+
+    const identity: UserIdentity = {
+      userId,
+      username: userId,
+      role: validRole,
+      permissions: [...(ROLE_PERMISSIONS[validRole] || [])],
+    };
+    this.knownUsers.set(userId, identity);
+    return identity;
+  }
+
+  /** All currently active JIT grants across every user (dashboard telemetry). */
+  public getAllActiveGrants(): TemporaryGrant[] {
+    this.cleanExpiredGrants();
+    return Array.from(this.temporaryGrants.values()).flat();
+  }
+
+  public revokeGrant(grantId: string): boolean {
+    for (const [userId, grants] of this.temporaryGrants) {
+      const idx = grants.findIndex((g) => g.id === grantId);
+      if (idx >= 0) {
+        grants.splice(idx, 1);
+        if (grants.length === 0) this.temporaryGrants.delete(userId);
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

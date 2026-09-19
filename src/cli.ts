@@ -8,6 +8,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { McpGateway } from "./proxy/gateway.js";
 import { startDashboard } from "./dashboard/server.js";
+import { AdaptiveController } from "./sentinel/adaptive-controller.js";
+import { ScenarioEngine, defaultFixtureSpecs } from "./sentinel/scenario-engine.js";
+import { fileURLToPath } from "node:url";
 import { createRunReport, markdownReportRenderer } from "./reporting/report.js";
 import { scanToolDescription } from "./middleware/security-scanner.js";
 import type { GatewayConfig, SecurityFinding } from "./types/index.js";
@@ -132,6 +135,80 @@ program
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       process.stderr.write(`Error: ${msg}\n`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("console")
+  .description("Launch the live security console with the attack-simulation engine (the demo experience)")
+  .option("-p, --port <port>", "Console port", "3100")
+  .option("-f, --fixtures <path>", "Directory containing the demo MCP server fixtures")
+  .option("-s, --sentinel <path>", "Path to a Sentinel config file")
+  .option("--run <scenario>", "Immediately run a scenario on startup")
+  .action(async (opts) => {
+    try {
+      const here = dirname(fileURLToPath(import.meta.url));
+      // Works from both src/ (tsx) and dist/ (compiled) layouts.
+      const fixtureDir = opts.fixtures
+        ? resolve(opts.fixtures)
+        : [resolve(here, "../test/fixtures"), resolve(here, "../../test/fixtures")]
+            .find((p) => existsSync(p)) ?? resolve("test/fixtures");
+
+      if (!existsSync(fixtureDir)) {
+        process.stderr.write(`Error: fixture directory not found: ${fixtureDir}\n`);
+        process.stderr.write(`Pass one explicitly with --fixtures <path>\n`);
+        process.exit(1);
+      }
+
+      let sentinelConfig: unknown = undefined;
+      const sentinelPath = opts.sentinel ? resolve(opts.sentinel) : resolve("sentinel.config.json");
+      if (existsSync(sentinelPath)) {
+        try {
+          sentinelConfig = JSON.parse(await readFile(sentinelPath, "utf-8"));
+        } catch {
+          process.stderr.write(`Warning: could not parse ${sentinelPath}; using defaults\n`);
+        }
+      }
+
+      const sentinel = new AdaptiveController(sentinelConfig as never);
+      const scenarioEngine = new ScenarioEngine(sentinel, defaultFixtureSpecs(fixtureDir));
+      const port = parseInt(opts.port || "3100", 10);
+
+      const dashboard = await startDashboard({
+        port,
+        auditLogPath: resolve("./mcp-sentinel-audit.jsonl"),
+        getStatus: () => ({ servers: [], rateLimits: [] }),
+        sentinel,
+        scenarioEngine,
+      });
+
+      process.stdout.write(`\n  MCP-Sentinel console → http://localhost:${port}\n`);
+      process.stdout.write(`  Fixtures: ${fixtureDir}\n`);
+      process.stdout.write(`  Scenarios: ${scenarioEngine.listScenarios().map((s) => s.id).join(", ")}\n\n`);
+
+      if (opts.run) {
+        if (!scenarioEngine.getScenario(opts.run)) {
+          process.stderr.write(`Unknown scenario "${opts.run}"\n`);
+        } else {
+          scenarioEngine.run(opts.run).catch((err) => {
+            process.stderr.write(`Scenario failed: ${err instanceof Error ? err.message : String(err)}\n`);
+          });
+        }
+      }
+
+      const shutdown = async () => {
+        process.stderr.write("\n[mcp-sentinel] Shutting down console...\n");
+        await scenarioEngine.shutdown();
+        await dashboard.close();
+        process.exit(0);
+      };
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+
+      await new Promise(() => {});
+    } catch (error) {
+      process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
       process.exit(1);
     }
   });

@@ -1,50 +1,46 @@
 {
-  "benchmarkTimestamp": "2026-09-19T11:12:30.553Z",
-  "scenarios": [
+  "generatedAt": "2026-09-19T12:16:33.264Z",
+  "fixture": "test/fixtures/rugpull-server.mjs",
+  "methodology": "Each architecture spawns the same MCP server child process, performs a clean call, triggers the in-band vendor update, then performs the compromised call. Overhead measures only the security pipeline, excluding upstream I/O.",
+  "results": [
     {
-      "scenario": "A: Raw MCP",
-      "architecture": "Direct Client → Server (No Proxy)",
-      "legitimateTaskSuccess": true,
+      "architecture": "A: Raw MCP",
+      "description": "Direct client → server (no proxy)",
+      "legitimateTaskSucceeded": true,
       "attackDetected": false,
       "attackBlocked": false,
       "attackContained": false,
-      "executionLatencyMs": 0.012,
+      "findingsCount": 0,
+      "finalRisk": 0,
+      "finalState": "NONE",
       "securityOverheadMs": 0,
-      "riskScore": 0,
-      "securityState": "NONE",
-      "findingsCount": 0
+      "notes": "Exfiltration payload returned to the agent verbatim; nothing observed it"
     },
     {
-      "scenario": "B: Static Gateway",
-      "architecture": "Static MCP Proxy (Descriptor Hashing + Rate Limits)",
-      "legitimateTaskSuccess": true,
+      "architecture": "B: Static gateway",
+      "description": "Descriptor scan + rate limit at registration",
+      "legitimateTaskSucceeded": true,
       "attackDetected": false,
       "attackBlocked": false,
       "attackContained": false,
-      "executionLatencyMs": 1.537,
-      "securityOverheadMs": 0.615,
-      "riskScore": 0,
-      "securityState": "STATIC_PASS",
-      "findingsCount": 0
+      "findingsCount": 0,
+      "finalRisk": 0,
+      "finalState": "NONE",
+      "securityOverheadMs": 2.841,
+      "notes": "Descriptor was clean when scanned; the compromise arrived afterwards and was never re-checked"
     },
     {
-      "scenario": "C: MCP-Sentinel",
-      "architecture": "Adaptive Control Plane (Observe → Assess → Control → Quarantine)",
-      "legitimateTaskSuccess": true,
+      "architecture": "C: MCP-Sentinel",
+      "description": "Adaptive control plane (behaviour + risk + quarantine)",
+      "legitimateTaskSucceeded": true,
       "attackDetected": true,
       "attackBlocked": true,
       "attackContained": true,
-      "executionLatencyMs": 1.195,
-      "securityOverheadMs": 1.145,
-      "riskScore": 78,
-      "securityState": "QUARANTINE",
-      "findingsCount": 11
+      "findingsCount": 15,
+      "finalRisk": 100,
+      "finalState": "QUARANTINE",
+      "securityOverheadMs": 10.827,
+      "notes": "Semantic expansion flagged pre-execution; runtime drift quarantined the server; retry hard-blocked"
     }
-  ],
-  "performanceSummary": {
-    "averageRiskEvaluationMs": 1.145,
-    "quarantineLatencyMs": 0.12,
-    "stateTransitionLatencyMs": 0.08,
-    "overheadCategory": "sub-millisecond (< 2ms per invocation)"
-  }
+  ]
 }

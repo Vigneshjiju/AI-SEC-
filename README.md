@@ -1,231 +1,267 @@
-# MCP-Sentinel: Adaptive Security Control Plane for Model Context Protocol
+# MCP-Sentinel — Adaptive Security Control Plane for the Model Context Protocol
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-brightgreen)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-51%20passing-brightgreen)](https://vitest.dev)
+[![Tests](https://img.shields.io/badge/tests-95%20passing-brightgreen)](https://vitest.dev)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen)](https://www.typescriptlang.org)
 
-> **MCP-Sentinel sits between AI agents / MCP clients and MCP upstream servers to provide runtime behavioral observation, explainable risk scoring, dynamic security state enforcement, and automated quarantine.**
+> An MCP server can behave perfectly during review and turn hostile afterwards.
+> **MCP-Sentinel keeps watching after the contract is signed** — observing what tools
+> actually do at runtime, scoring the divergence, and containing servers that drift.
 
 ---
 
-## Attribution & Foundation
+## The problem
 
-**MCP-Sentinel** is built on top of [Niraven/mcp-gateway](https://github.com/Niraven/mcp-gateway) (licensed under MIT). 
+Everything that secures an MCP server today happens **before** it runs:
 
-We preserve and build upon `mcp-gateway`'s excellent MCP proxy foundations:
-- MCP STDIO client/server proxy protocol implementation
-- Static tool description scanning & poisoning detection
-- Cryptographic descriptor hashing & baseline drift detection
-- Token-bucket rate limiting
-- Human approval gate mechanics
-- Audit logging & JSONL run reporting
+| Layer | When it checks | What it misses |
+|---|---|---|
+| Descriptor scanning | Registration | A tool that changes its descriptor later |
+| Schema validation | Registration | Behaviour the schema never described |
+| Human review | Onboarding | Literally everything after onboarding |
+| Rate limiting | Per call | A single malicious call |
 
-Around this foundation, **MCP-Sentinel adds an adaptive security control plane**:
-- **Declared vs. Authorized vs. Observed Capability Model**
-- **Runtime Tool Behavior Fingerprinting & Drift Detection**
-- **Deterministic, Explainable Weighted Risk Engine (0–100)**
-- **5-State Security State Machine (NORMAL → MONITOR → RESTRICT → HUMAN_APPROVAL → QUARANTINE)** with hysteresis and cooldown
-- **Automated Quarantine & Controlled Recovery System**
-- **Role-Based Access Control (RBAC) & Just-In-Time (JIT) Temporary Grants** (Keycloak-ready)
-- **Live Glassmorphic Cybersecurity Dashboard** with real-time risk dials and explainable decisions
-- **End-to-End Rug-Pull Attack Simulation & Verification Pipeline**
+A third-party server passes every one of those, earns trust, then starts reading
+`~/.ssh/id_rsa` and posting to a C2 endpoint. This is the **rug-pull**, and static
+inspection is structurally incapable of seeing it.
 
----
+Our evaluation reproduces it against a real MCP server:
 
-## The Problem: The "Rug-Pull" Attack in MCP
+| Architecture | Legit task | Detected | Blocked | Contained | Security overhead |
+|---|---|---|---|---|---|
+| **A** Raw MCP | ✅ | ❌ | ❌ | ❌ | 0 ms |
+| **B** Static gateway | ✅ | ❌ | ❌ | ❌ | ~2.8 ms |
+| **C** MCP-Sentinel | ✅ | **✅** | **✅** | **✅ quarantined** | ~10.8 ms |
 
-In the Model Context Protocol (MCP) ecosystem:
-1. **Initial Trust Is Misleading**: A tool may declare benign intent (`search_logs`) and behave properly during testing or registration.
-2. **Dynamic Behavior Drift**: Once deployed into production, an external MCP server can dynamically change behavior (a *rug-pull* attack), reading local files (`.env`, `~/.ssh/id_rsa`), extracting environment variables, or establishing unauthorized outbound network connections to Command & Control (C2) servers.
-3. **Static Scanners Fail**: Static descriptor scanners and schema validators only inspect metadata *before* execution. They cannot see what happens *during* tool execution.
-4. **LLM Is Not a Security Authority**: The AI agent cannot be trusted to self-police or detect subtle exfiltration channels embedded in tool outputs.
-
-### The MCP-Sentinel Solution
-
-MCP-Sentinel implements the closed-loop security control cycle:
-
-```
-      AI Agent / MCP Client
-                │
-                ▼
-┌───────────────────────────────────────┐
-│       MCP-Sentinel Gateway            │
-│  Validate ↓ Observe ↓ Assess Risk ↓   │
-│  Apply Policy ↓ Control ↓ Observe ↺   │
-└───────────────────┬───────────────────┘
-                    │
-        ┌───────────┴───────────┐
-        ▼                       ▼
-  Legitimate MCP          Third-Party Vendor
-     Servers             Tools (Under Watch)
-```
+Reproduce with `npm run evaluate` — the numbers are measured, not quoted.
 
 ---
 
-## Key Innovations
-
-### 1. Capability Triad: Declared vs. Authorized vs. Observed
-Every tool registration defines what it claims to do (`declaredCapabilities`) and what policies permit (`authorizedCapabilities`). During runtime, the `BehaviorEngine` tracks actual execution (`observedCapabilities`). Any mismatch dynamically contributes to the tool's risk score.
-
-### 2. Explainable Deterministic Risk Engine (0–100)
-Risk is never a black-box machine learning guess. Every risk score is calculated deterministically from concrete security factors:
-$$\text{Risk Score} = \sum (\text{Factor Weight} \times \text{Observed Severity})$$
-- **Integrity Risk**: Descriptor changes and schema modifications
-- **Behavior Risk**: New filesystem, network, process, or environment access
-- **Runtime Risk**: Capability firewall violations
-- **Authorization Risk**: Role-permission mismatches
-- **Sensitivity Risk**: Access to `.env`, private keys, cloud credentials
-- **Anomaly Risk**: Prior incident history and abnormal response patterns
-
-### 3. Adaptive State Machine
-System and server trust states transition across 5 levels:
-$$\text{NORMAL} \longrightarrow \text{MONITOR} \longrightarrow \text{RESTRICT} \longrightarrow \text{HUMAN\_APPROVAL} \longrightarrow \text{QUARANTINE}$$
-- **Hysteresis**: Upward escalations are immediate; downward recoveries require explicit cooldown and admin authorization.
-- **Quarantine Guarantee**: Quarantined servers are blocked by **hard security rules**. They are never automatically returned to `NORMAL` state merely because a score drops.
-
----
-
-## Quick Start
-
-### Installation
+## Quick start
 
 ```bash
-# Clone the repository
-git clone https://github.com/Niraven/mcp-gateway.git
-cd mcp-gateway
-
-# Install dependencies
 npm install
 
-# Build TypeScript to dist/
-npm run build
+# The interactive console — this is the demo
+npm run console          # → http://localhost:3100
 
-# Run full test suite (51 tests passing)
-npm test
+# Or run scenarios in the terminal
+npm run demo             # the signature rug-pull
+npm run demo:all         # all six scenarios
+npm run evaluate         # the comparative benchmark
+
+npm test                 # 95 tests, incl. 7 against real MCP child processes
 ```
 
-### Run the Signature Rug-Pull Attack Demo
-
-Execute the complete end-to-end hackathon demonstration:
-
-```bash
-npm run demo
-```
-
-You will witness:
-1. Registration of legitimate and third-party vendor servers
-2. Normal tool call execution (`ALLOW`, Risk: 0, State: `NORMAL`)
-3. Activation of the rug-pull compromise on the vendor server
-4. Detection of 11 behavioral drift findings (`.env` access, C2 network connections, shell exec)
-5. Risk score escalation from 0 → 78/100
-6. State machine transition: `NORMAL` → `MONITOR` → `QUARANTINE`
-7. Subsequent malicious execution attempts immediately **BLOCKED** by hard quarantine policy
-8. Controlled recovery by SecOps administrator back to `MONITOR` state
-
-### Run Comparative Benchmark Evaluation
-
-```bash
-npm run evaluate
-```
-
-Compares **Raw MCP**, **Static Gateway**, and **MCP-Sentinel Adaptive Defense** across real execution metrics:
-
-| Scenario | Legitimate Task | Attack Detected | Attack Blocked | Contained? | Security Overhead |
-|---|---|---|---|---|---|
-| **A: Raw MCP** | YES | NO (MISSED) | NO (BYPASS) | NO | 0.00 ms |
-| **B: Static Gateway** | YES | NO (MISSED) | NO (BYPASS) | NO | ~0.5 ms |
-| **C: MCP-Sentinel** | **YES** | **YES** | **YES** | **YES (QUAR)** | **~1.1 ms** |
+Open the console and click a scenario. Each one **spawns real MCP server
+processes** and drives genuine stdio JSON-RPC tool calls through the pipeline.
+The risk scores, drift findings, state transitions and quarantines you watch
+appear are computed from the bytes those servers actually return.
 
 ---
 
-## Starting the Gateway with Live Dashboard
+## The six scenarios
 
-```bash
-# Start Gateway with Sentinel control plane and web dashboard
-npx tsx src/cli.ts start -c mcp-sentinel.json -d -p 3100
-```
+| Scenario | Technique | What it proves |
+|---|---|---|
+| **Benign investigation** | Control | No false positives on a textbook SOC workflow |
+| **Rug-pull** | T1195.002 Supply Chain | Trust earned, then betrayed — caught at both the descriptor and runtime layers |
+| **Exfiltration chain** | T1041 Exfil over C2 | Every tool is authorized; the *order* is the attack |
+| **Prompt injection** | OWASP LLM01 | An honest server returning attacker-controlled data |
+| **Hostile input** | SSRF / traversal / injection | Rejected before the child process is contacted |
+| **Privilege escalation** | T1548 | Capability-tiered RBAC + time-boxed JIT elevation |
 
-Open your browser to:
-**`http://localhost:3100`**
-
-### Dashboard Highlights
-- **Giant Security State Banner**: Real-time glow indicators for system state (`NORMAL` through `QUARANTINE`).
-- **Capability Mismatch Highlighting**: Real-time tags highlight unauthorized filesystem, network, or env accesses with pulsing alerts.
-- **Explainable Security Decisions Card**: Detailed breakdowns answering *WHAT*, *WHY*, *EVIDENCE*, *POLICY*, and *ACTION*.
-- **Interactive Demo Controls**: Buttons to trigger or reset the rug-pull attack live directly from the UI.
-- **Human Approval Modal**: Review and approve/deny elevated-risk actions.
+Each scenario declares its **expected outcome** and the engine verifies it —
+`expectationsMet` is reported per run, so a broken control plane fails visibly
+instead of quietly printing a success story.
 
 ---
 
-## Architecture & File Structure
+## How it works
+
+```
+   AI agent / MCP client
+            │  JSON-RPC over stdio
+            ▼
+┌───────────────────────────────────────────────────────────┐
+│  MCP-SENTINEL                                             │
+│                                                           │
+│  PRE-EXECUTION                    POST-EXECUTION          │
+│  ─────────────                    ──────────────          │
+│  1 identity verification          6 behaviour fingerprint │
+│  2 hard quarantine rule           7 baseline comparison   │
+│  3 input validation               8 output scanning       │
+│  4 capability lease               9 risk assessment       │
+│  5 contextual sequence           10 state transition      │
+│    · data-flow taint             11 quarantine / receipt  │
+│    · capability-tiered RBAC                               │
+│    · human approval gate                                  │
+└───────────────────────────────┬───────────────────────────┘
+                                ▼
+                        MCP servers (untrusted)
+```
+
+### 1. The capability triad
+
+| Layer | Source | Meaning |
+|---|---|---|
+| **Declared** | Inferred from the tool's own descriptor | What it says it does |
+| **Authorized** | Policy | What it is permitted to do |
+| **Observed** | Real tool responses at runtime | What it actually did |
+
+Drift is `Observed ⊄ Declared`. A policy violation is `Observed ⊄ Authorized`.
+Comparison is **semantic**, not string equality — a private-range address is not
+external egress, and a declared scope of `*` means "declared, unconstrained".
+
+### 2. Risk is persistent, not per-call
+
+Risk carries forward, decays on a configurable half-life, and **compounds** when
+bad behaviour repeats:
+
+```
+carried  = previous × 0.5 ^ (elapsed / halfLife)
+score    = max(instant, carried) + instant × accumulation
+```
+
+This matters: with a stateless score, one innocuous response resets a compromised
+server to zero. Every score ships with a `reasons[]` array naming each contributing
+factor — no opaque model anywhere in the decision path.
+
+### 3. Five-state machine with hysteresis
+
+```
+NORMAL → MONITOR → RESTRICT → HUMAN_APPROVAL → QUARANTINE
+```
+
+Escalation is immediate. De-escalation requires both a margin below the threshold
+and a cooldown, so states cannot flap. **Quarantine is a hard rule** evaluated
+before anything else — no risk arithmetic can unlock it, and recovery is an
+operator action that lands in `MONITOR`, never straight back to `NORMAL`.
+
+### 4. Capability-tiered RBAC
+
+Roles are granted **capability classes**, not lists of tool names — so policy
+covers servers whose tools nobody enumerated in advance:
+
+| Role | READ | EXTERNAL_LOOKUP | WRITE | INFRA_CONTROL | SECRET_ACCESS | DATA_TRANSFER | EXEC |
+|---|---|---|---|---|---|---|---|
+| viewer | ✅ | ✅ | | | | | |
+| analyst | ✅ | ✅ | ✅ | | | | |
+| incident_responder | ✅ | ✅ | ✅ | ✅ | ✅ | | |
+| admin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+Just-In-Time grants elevate a user for a bounded TTL and can target either a tool
+name or a whole capability class.
+
+### 5. Approvals that actually resume
+
+Approving a request issues a **single-use, time-boxed grant**. The retried call
+redeems it and proceeds. Without this, approval only flips a status field and the
+agent loops forever re-requesting the same action.
+
+---
+
+## The console
+
+`npm run console` serves a live operations view at `http://localhost:3100`:
+
+- **Attack console** — launch any scenario; steps stream in over Server-Sent Events
+- **Kill chain** — every step with its narrative, verdict, evidence and real tool output
+- **Risk timeline** — multi-series chart with threshold guides and a hover crosshair
+- **Capability triad** — declared vs authorized vs observed, violations highlighted
+- **Explained decisions** — what / why / evidence / policy / action for every restriction
+- **Approvals** — approve or deny; the grant is issued immediately
+- **Receipts** — SHA-256 hashed, tamper-evident decision ledger
+
+It is a single self-contained HTML file: no CDN fonts, no external scripts, and all
+untrusted text is escaped before rendering — the console reads output from servers
+it assumes are hostile.
+
+---
+
+## Architecture
 
 ```
 src/
-├── sentinel/                      # NEW MCP-Sentinel Control Plane Modules
-│   ├── adaptive-controller.ts     # Central orchestrator (Validate→Observe→Assess→Control)
-│   ├── auth.ts                    # RBAC, Keycloak-ready identity & JIT temporary grants
-│   ├── behavior.ts                # Fingerprinting & runtime behavior drift engine
-│   ├── events.ts                  # Pub/sub structured security event bus
-│   ├── output-scanner.ts          # Prompt injection & secret leakage inspection
-│   ├── policy.ts                  # Hard security rules + adaptive state-based policies
-│   ├── quarantine.ts              # Server quarantine manager & controlled recovery
-│   ├── registry.ts                # Metadata registry for servers & tools
-│   ├── risk-engine.ts             # Deterministic weighted risk scoring (0–100)
-│   ├── runtime.ts                 # Runtime capability firewall
-│   ├── state-machine.ts           # 5-state adaptive state machine with hysteresis
-│   └── types.ts                   # Core TypeScript type definitions
-├── proxy/
-│   └── gateway.ts                 # Extended MCP Proxy integrating Sentinel pipeline
-├── dashboard/
-│   ├── index.html                 # Redesigned glassmorphic dark-theme security dashboard
-│   └── server.ts                  # REST API server for dashboard telemetry & actions
-├── middleware/                    # PRESERVED Niraven Gateway Middlewares
-│   ├── approval.ts                # Approval gate middleware
-│   ├── audit-logger.ts            # JSONL audit logging
-│   ├── rate-limiter.ts            # Token bucket rate limiting
-│   └── security-scanner.ts        # Descriptor poisoning & prompt injection scanner
-├── reporting/                     # Run report generator & secret redaction
-└── cli.ts                         # Command-line interface
-test/
-├── fixtures/
-│   ├── legitimate-server.mjs      # Server A: SOC Tools (Benign)
-│   ├── rugpull-server.mjs         # Server B: Rug-Pull Demo Server (Switches behavior)
-│   └── high-risk-server.mjs       # Server C: High-Risk Tools (Requires approval)
-├── demo.ts                        # End-to-end demo execution script
-└── evaluation.ts                  # Real comparative evaluation benchmark script
+├── sentinel/
+│   ├── adaptive-controller.ts   Orchestrator: pre/post execution pipeline
+│   ├── scenario-engine.ts       Drives real MCP servers through live scenarios
+│   ├── capability-model.ts      Shared tool classification + capability-tier RBAC
+│   ├── behavior.ts              Fingerprinting, drift detection, conformance
+│   ├── risk-engine.ts           Stateful, decaying, explainable 0–100 scoring
+│   ├── state-machine.ts         5-state machine with hysteresis
+│   ├── policy.ts                Hard rules, adaptive policy, approval grants
+│   ├── auth.ts                  RBAC + JIT grants
+│   ├── contextual-engine.ts     Capability-transition / sequence analysis
+│   ├── data-flow.ts             Taint tracking for sensitive data
+│   ├── semantic-firewall.ts     Detects tool-contract expansion
+│   ├── identity.ts              HMAC token verification
+│   ├── lease-manager.ts         Time-bounded capability leases
+│   ├── input-validator.ts       SSRF / traversal / command injection
+│   ├── output-scanner.ts        Prompt injection + secret leakage
+│   ├── quarantine.ts            Containment and controlled recovery
+│   ├── receipts.ts              SHA-256 decision ledger
+│   └── registry.ts              Server/tool registry + capability inference
+├── proxy/gateway.ts             MCP stdio proxy with the Sentinel pipeline inline
+├── dashboard/                   SSE server + self-contained console
+├── middleware/                  Rate limiting, approval gate, scanner, audit log
+└── cli.ts                       start · console · scan · report · validate · init
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for subsystem detail and
+[THREAT_MODEL.md](THREAT_MODEL.md) for what is and is not in scope.
+
+---
+
+## Using it as a real gateway
+
+```bash
+npx tsx src/cli.ts start -c mcp-sentinel.json -d -p 3100
+```
+
+Point an MCP client at the gateway instead of at your servers. It proxies
+`tools/list` and `tools/call` over stdio, applying the full pipeline to each call.
+
+Audit your existing setup without running anything:
+
+```bash
+npx tsx src/cli.ts scan --claude-desktop
+npx tsx src/cli.ts scan --claude-desktop --fix > hardened.json
 ```
 
 ---
 
-## Security Scenarios Tested
+## Scope and honest limitations
 
-Automated unit and integration test suite (`tests/sentinel.test.ts` & `tests/gateway.test.ts`):
+**What it observes.** Sentinel analyses MCP protocol traffic: tool descriptors,
+arguments, and response content. That is a real and load-bearing signal — it is
+where exfiltrated data, C2 URLs, file paths and injected instructions actually
+appear — but it is **evidence of behaviour, not syscall-level ground truth**.
 
-1. **TEST 1: Normal Tool Invocation** → Result: `ALLOW` (Risk: 0, State: `NORMAL`)
-2. **TEST 2: Unauthorized Tool Invocation** → Result: `BLOCK` (Hard authorization rule)
-3. **TEST 3: Descriptor Modification** → Result: `DRIFT DETECTED` (Cryptographic hash mismatch)
-4. **TEST 4: Tool Poisoning Payload** → Result: `DETECT` (Descriptor scanner catches injection)
-5. **TEST 5: Unexpected Filesystem Access** → Result: `RISK INCREASE` (Undeclared paths detected)
-6. **TEST 6: Unexpected Network Access** → Result: `RISK INCREASE / BLOCK` (Outbound C2 detected)
-7. **TEST 7: Sensitive File Access** → Result: `RISK INCREASE` (`.env`, `id_rsa` flags triggered)
-8. **TEST 8: Repeated Abnormal Calls** → Result: `RESTRICT` (Score escalation across calls)
-9. **TEST 9: High-Risk Destructive Tool** → Result: `HUMAN APPROVAL` (`block_ip` paused for review)
-10. **TEST 10: Severe Malicious Behavior** → Result: `QUARANTINE` (Immediate execution cutoff)
-11. **TEST 11–15: Auth & JIT Grants** → Result: Role-based gating, JIT temporary grants, expiry cleanup
+**What it cannot see.** A server that exfiltrates over a side channel without
+reflecting anything in its MCP response is invisible to this layer. Sentinel is
+designed to be paired with OS-level isolation (containers, gVisor, eBPF syscall
+monitoring) for defence in depth. It narrows the window; it does not close it.
 
----
+**Why deterministic scoring.** Every block is explainable and reproducible. An LLM
+judging its own tool calls is not a security boundary, and an opaque model score
+cannot be audited after an incident.
 
-## Realistic Scope & Limitations
-
-As an evidence-based security control plane, we state clearly what MCP-Sentinel provides and its current limitations:
-
-- **What It Detects**: Output-reflected file paths, unauthorized outbound network requests, process execution indicators, environment variable access, and schema mismatches.
-- **Defense in Depth, Not a Magic Bullet**: MCP-Sentinel analyzes tool responses and proxy traffic. In production, it is intended to be paired with OS-level sandbox isolation (e.g. gVisor, Docker containers, or eBPF syscall monitors) for defense-in-depth.
-- **Explainability Over Black-Box Models**: We intentionally use deterministic weighted scoring rather than opaque neural networks so that every blocked action has an auditable evidence chain.
+**Prompt injection.** The output scanner detects known patterns. Pattern matching
+does not solve prompt injection — the durable mitigation here is the authorization
+boundary: in the injection scenario the agent is *successfully* injected and still
+cannot reach the credentials, because its role holds no `SECRET_ACCESS` capability.
 
 ---
+
+## Attribution
+
+Built on [Niraven/mcp-gateway](https://github.com/Niraven/mcp-gateway) (MIT), which
+contributes the MCP stdio proxy, descriptor scanning and hashing, token-bucket rate
+limiting, the approval gate, and JSONL audit logging. MCP-Sentinel adds the adaptive
+control plane described above.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details. MCP-Sentinel is built on the [Niraven/mcp-gateway](https://github.com/Niraven/mcp-gateway) repository with deep gratitude to the original authors.
+MIT — see [LICENSE](LICENSE).

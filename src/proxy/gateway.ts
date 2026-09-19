@@ -134,12 +134,16 @@ export class McpGateway {
             this.toolAnnotations.set(prefixedName, normalizeAnnotations(tool.annotations));
 
             // ── Register tool in Sentinel registry ──
+            // Descriptor text and annotations both feed capability inference,
+            // so the declared-vs-observed comparison has something real to
+            // compare against rather than an empty set.
             if (this.sentinel) {
               const server = this.sentinel.registry.getServerByName(serverName);
               if (server) {
                 this.sentinel.registry.registerTool(server.serverId, tool.name, {
                   description: tool.description ?? "",
                   inputSchema: tool.inputSchema,
+                  annotations: normalizeAnnotations(tool.annotations),
                 });
               }
             }

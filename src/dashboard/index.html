@@ -3,1060 +3,1342 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MCP-Sentinel — Adaptive Security Control Plane for MCP</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<title>MCP-Sentinel — Adaptive Security Control Plane</title>
 <style>
+/* ═══════════════════════════════════════════════════════════
+   MCP-Sentinel Console
+   Self-contained: no external fonts, scripts, or stylesheets,
+   so the dashboard works on an air-gapped demo machine.
+   ═══════════════════════════════════════════════════════════ */
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg-primary: #0a0d14;
-  --bg-secondary: #0f1422;
-  --panel-bg: rgba(18, 24, 38, 0.75);
-  --panel-border: rgba(255, 255, 255, 0.08);
-  --panel-hover: rgba(25, 34, 54, 0.85);
-  
-  --text-primary: #f0f4fc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  
-  --state-normal: #10b981;
-  --state-normal-glow: rgba(16, 185, 129, 0.25);
-  --state-monitor: #06b6d4;
-  --state-monitor-glow: rgba(6, 182, 212, 0.25);
-  --state-restrict: #f59e0b;
-  --state-restrict-glow: rgba(245, 158, 11, 0.25);
-  --state-approval: #ec4899;
-  --state-approval-glow: rgba(236, 72, 153, 0.25);
-  --state-quarantine: #ef4444;
-  --state-quarantine-glow: rgba(239, 68, 68, 0.35);
+  color-scheme: dark;
 
-  --accent-cyan: #00e5ff;
-  --accent-purple: #8b5cf6;
+  /* Surfaces */
+  --plane:        #0b0e14;
+  --surface-1:    #141922;
+  --surface-2:    #1b2130;
+  --surface-3:    #232b3b;
+
+  /* Ink */
+  --ink-primary:   #f2f5fa;
+  --ink-secondary: #a7b0c0;
+  --ink-muted:     #6f7a8d;
+
+  /* Hairlines */
+  --rule:      rgba(255, 255, 255, 0.09);
+  --rule-soft: rgba(255, 255, 255, 0.05);
+  --grid:      rgba(255, 255, 255, 0.07);
+
+  /* Security-state palette — ordered severity, validated against --surface-1.
+     Every state is ALWAYS rendered with its text label and a glyph, so meaning
+     never rests on hue alone (required: good/critical collide under deuteranopia). */
+  --state-normal:         #0ca30c;
+  --state-monitor:        #22a7c4;
+  --state-restrict:       #fab219;
+  --state-human_approval: #9085e9;
+  --state-quarantine:     #d03b3b;
+
+  /* Categorical series slots for the risk timeline (all-pairs validated) */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+
   --radius-sm: 6px;
   --radius-md: 10px;
-  --radius-lg: 16px;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-heading: 'Outfit', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --radius-lg: 14px;
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 body {
-  font-family: var(--font-sans);
-  background: radial-gradient(circle at 50% 0%, #151d32 0%, var(--bg-primary) 70%);
-  color: var(--text-primary);
+  font-family: var(--font);
+  background: var(--plane);
+  color: var(--ink-primary);
   line-height: 1.5;
   min-height: 100vh;
-  padding-bottom: 40px;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
 }
 
-.layout {
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 24px 28px;
-}
+.layout { max-width: 1500px; margin: 0 auto; padding: 20px 24px 64px; }
 
-/* Header */
+/* ── Header ── */
 header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--panel-border);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  padding-bottom: 16px; margin-bottom: 20px;
+  border-bottom: 1px solid var(--rule);
 }
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark {
+  width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+  background: linear-gradient(140deg, #2b6fd4 0%, #6d4fd0 100%);
+  display: grid; place-items: center;
 }
+.brand-mark svg { width: 21px; height: 21px; fill: #fff; }
+.brand h1 { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+.brand p { font-size: 0.78rem; color: var(--ink-muted); }
+.header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-.brand-icon {
-  width: 44px;
-  height: 44px;
-  background: linear-gradient(135deg, #00e5ff 0%, #8b5cf6 100%);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 20px rgba(0, 229, 255, 0.35);
-}
-
-.brand-icon svg {
-  width: 26px;
-  height: 26px;
-  fill: #fff;
-}
-
-.brand-title h1 {
-  font-family: var(--font-heading);
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  background: linear-gradient(90deg, #fff 0%, #cbd5e1 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.brand-title p {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  letter-spacing: 0.02em;
-}
-
-.header-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 9999px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.badge-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-
+/* ── Buttons ── */
 .btn {
-  font-family: var(--font-sans);
-  font-size: 0.82rem;
-  font-weight: 500;
-  padding: 8px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--panel-border);
-  background: var(--panel-bg);
-  color: var(--text-primary);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.2s ease;
-  backdrop-filter: blur(8px);
+  font: inherit; font-size: 0.82rem; font-weight: 520;
+  padding: 7px 13px; border-radius: var(--radius-sm);
+  border: 1px solid var(--rule); background: var(--surface-2);
+  color: var(--ink-primary); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
+.btn:hover:not(:disabled) { background: var(--surface-3); border-color: rgba(255,255,255,0.18); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.btn-accent { background: rgba(57,135,229,0.16); border-color: rgba(57,135,229,0.42); color: #a9cdfa; }
+.btn-accent:hover:not(:disabled) { background: rgba(57,135,229,0.26); }
+.btn-danger { background: rgba(208,59,59,0.15); border-color: rgba(208,59,59,0.42); color: #f0a3a3; }
+.btn-danger:hover:not(:disabled) { background: rgba(208,59,59,0.26); }
+.btn-sm { padding: 4px 9px; font-size: 0.75rem; }
 
-.btn:hover {
-  background: var(--panel-hover);
-  border-color: rgba(255, 255, 255, 0.2);
+/* ── Live indicator ── */
+.live-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 0.74rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--rule); background: var(--surface-2); color: var(--ink-secondary);
 }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-muted); }
+.live-pill.online { border-color: rgba(12,163,12,0.4); color: #7ede7e; }
+.live-pill.online .live-dot { background: var(--state-normal); animation: breathe 2.4s ease-in-out infinite; }
+.live-pill.offline { border-color: rgba(208,59,59,0.4); color: #f0a3a3; }
+.live-pill.offline .live-dot { background: var(--state-quarantine); }
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.btn-danger {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: rgba(239, 68, 68, 0.4);
-  color: #fca5a5;
-}
-
-.btn-danger:hover {
-  background: rgba(239, 68, 68, 0.35);
-  border-color: #ef4444;
-  color: #fff;
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
-}
-
-.btn-primary {
-  background: rgba(0, 229, 255, 0.18);
-  border-color: rgba(0, 229, 255, 0.4);
-  color: #67e8f9;
-}
-
-.btn-primary:hover {
-  background: rgba(0, 229, 255, 0.3);
-  border-color: var(--accent-cyan);
-  color: #fff;
-  box-shadow: 0 0 12px rgba(0, 229, 255, 0.4);
-}
-
-/* Glass Panels */
-.glass-panel {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-md);
-  padding: 20px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  transition: border-color 0.2s ease;
-}
-
-.glass-panel:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-}
-
-/* Stat Grid */
-.stat-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.stat-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.stat-card-title {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.stat-card-value {
-  font-family: var(--font-heading);
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.1;
-}
-
-.security-state-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 20, 34, 0.5) 100%);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  border-radius: var(--radius-md);
-  padding: 16px 20px;
-  margin-bottom: 24px;
-  transition: all 0.3s ease;
-}
-
-.security-state-banner.MONITOR {
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(15, 20, 34, 0.5) 100%);
-  border-color: var(--state-monitor);
-}
-
-.security-state-banner.RESTRICT {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(15, 20, 34, 0.5) 100%);
-  border-color: var(--state-restrict);
-}
-
-.security-state-banner.HUMAN_APPROVAL {
-  background: linear-gradient(135deg, rgba(236, 72, 153, 0.2) 0%, rgba(15, 20, 34, 0.5) 100%);
-  border-color: var(--state-approval);
-}
-
-.security-state-banner.QUARANTINE {
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.25) 0%, rgba(15, 20, 34, 0.6) 100%);
-  border-color: var(--state-quarantine);
-  box-shadow: 0 0 25px var(--state-quarantine-glow);
-}
-
-.banner-content {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.state-badge-giant {
-  font-family: var(--font-heading);
-  font-size: 1.2rem;
-  font-weight: 800;
-  padding: 8px 18px;
-  border-radius: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.banner-desc {
-  color: var(--text-secondary);
-  font-size: 0.88rem;
-}
-
-/* Tab Navigation */
-.tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--panel-border);
-  padding-bottom: 8px;
-}
-
-.tab-btn {
-  font-family: var(--font-heading);
-  font-size: 0.92rem;
-  font-weight: 600;
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tab-btn:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.tab-btn.active {
-  color: #fff;
-  background: rgba(0, 229, 255, 0.15);
-  border: 1px solid rgba(0, 229, 255, 0.35);
-}
-
-/* Tables */
-.table-container {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: left;
-  font-size: 0.86rem;
-}
-
-th {
-  font-family: var(--font-heading);
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--panel-border);
-  font-weight: 600;
-}
-
-td {
-  padding: 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  vertical-align: middle;
-}
-
-tr:hover td {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-/* Caps Tag */
-.caps-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.cap-tag {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  padding: 2px 7px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.cap-tag.mismatch {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: rgba(239, 68, 68, 0.5);
-  color: #fca5a5;
-  font-weight: 600;
-  animation: pulse-red 2s infinite;
-}
-
-@keyframes pulse-red {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  50% { box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.3); }
-}
-
-/* Incident Explainer Cards */
-.incident-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.incident-card {
-  background: rgba(25, 30, 45, 0.6);
+/* ── Panels ── */
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--rule);
   border-radius: var(--radius-md);
   padding: 18px;
-  border-left: 4px solid var(--state-quarantine);
+}
+.panel-title {
+  font-size: 0.95rem; font-weight: 620; margin-bottom: 4px;
+  display: flex; align-items: center; gap: 8px; justify-content: space-between;
+}
+.panel-sub { font-size: 0.8rem; color: var(--ink-muted); margin-bottom: 14px; }
+
+/* ── Attack console ── */
+.console-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.console-head h2 { font-size: 0.95rem; font-weight: 620; }
+.console-head p { font-size: 0.8rem; color: var(--ink-muted); }
+
+.scenario-grid {
+  display: grid; gap: 10px; margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+}
+.scenario-card {
+  text-align: left; font: inherit; cursor: pointer;
+  background: var(--surface-1); border: 1px solid var(--rule);
+  border-radius: var(--radius-md); padding: 14px;
+  display: flex; flex-direction: column; gap: 7px;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.scenario-card:hover:not(:disabled) {
+  border-color: rgba(57,135,229,0.55); background: var(--surface-2); transform: translateY(-1px);
+}
+.scenario-card:disabled { opacity: 0.5; cursor: not-allowed; }
+.scenario-card:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.scenario-card.running { border-color: var(--series-1); background: var(--surface-2); }
+.scenario-card h3 { font-size: 0.88rem; font-weight: 620; color: var(--ink-primary); }
+.scenario-card p { font-size: 0.78rem; color: var(--ink-secondary); line-height: 1.45; }
+.scenario-meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 0.68rem; color: var(--ink-muted);
+  padding-top: 7px; border-top: 1px solid var(--rule-soft); margin-top: auto;
+}
+.technique-tag {
+  font-family: var(--mono); font-size: 0.67rem;
+  padding: 2px 6px; border-radius: 4px;
+  background: rgba(144,133,233,0.14); color: #b7aef2; border: 1px solid rgba(144,133,233,0.28);
 }
 
-.incident-card.drift {
-  border-left-color: var(--state-restrict);
+/* ── Hero row ── */
+.hero { display: grid; grid-template-columns: minmax(0,1.55fr) minmax(0,1fr); gap: 14px; margin-bottom: 14px; }
+@media (max-width: 1000px) { .hero { grid-template-columns: 1fr; } }
+
+.state-banner {
+  border-radius: var(--radius-md); padding: 18px 20px;
+  border: 1px solid var(--rule); background: var(--surface-1);
+  display: flex; align-items: center; gap: 18px;
+  transition: border-color 0.35s ease, background 0.35s ease;
+}
+.state-banner[data-state="QUARANTINE"] { border-color: rgba(208,59,59,0.6); background: linear-gradient(115deg, rgba(208,59,59,0.14), var(--surface-1) 62%); }
+.state-banner[data-state="HUMAN_APPROVAL"] { border-color: rgba(144,133,233,0.55); background: linear-gradient(115deg, rgba(144,133,233,0.13), var(--surface-1) 62%); }
+.state-banner[data-state="RESTRICT"] { border-color: rgba(250,178,25,0.5); background: linear-gradient(115deg, rgba(250,178,25,0.12), var(--surface-1) 62%); }
+.state-banner[data-state="MONITOR"] { border-color: rgba(34,167,196,0.5); background: linear-gradient(115deg, rgba(34,167,196,0.12), var(--surface-1) 62%); }
+.state-banner[data-state="NORMAL"] { border-color: rgba(12,163,12,0.4); }
+
+.state-chip {
+  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  font-size: 0.82rem; font-weight: 680; letter-spacing: 0.05em;
+  padding: 8px 14px; border-radius: 8px; color: #06080c;
+  white-space: nowrap;
+}
+.state-chip .glyph { font-size: 0.9rem; line-height: 1; }
+.banner-copy h2 { font-size: 1.02rem; font-weight: 640; margin-bottom: 3px; }
+.banner-copy p { font-size: 0.83rem; color: var(--ink-secondary); }
+
+/* Risk gauge */
+.gauge-card { display: flex; align-items: center; gap: 18px; }
+.gauge { position: relative; width: 104px; height: 104px; flex-shrink: 0; }
+.gauge svg { transform: rotate(-90deg); }
+.gauge-value {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 1.7rem; font-weight: 680; letter-spacing: -0.02em;
+}
+.gauge-meta { min-width: 0; }
+.gauge-meta .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); font-weight: 600; }
+.gauge-meta .sub { font-size: 0.8rem; color: var(--ink-secondary); margin-top: 4px; }
+
+/* ── Stat tiles ── */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.stat {
+  background: var(--surface-1); border: 1px solid var(--rule);
+  border-radius: var(--radius-md); padding: 13px 15px;
+}
+.stat .label { font-size: 0.71rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); font-weight: 600; }
+.stat .value { font-size: 1.55rem; font-weight: 660; letter-spacing: -0.02em; margin-top: 3px; }
+.stat .foot { font-size: 0.74rem; color: var(--ink-muted); margin-top: 1px; }
+
+/* ── Chart ── */
+.chart-wrap { position: relative; }
+.chart-legend {
+  display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  margin-bottom: 10px; font-size: 0.78rem; color: var(--ink-secondary);
+}
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.legend-swatch { width: 11px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+#riskChart { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-tooltip {
+  position: absolute; pointer-events: none; opacity: 0; z-index: 20;
+  background: var(--surface-3); border: 1px solid var(--rule);
+  border-radius: var(--radius-sm); padding: 8px 10px;
+  font-size: 0.76rem; min-width: 150px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  transition: opacity 0.12s ease;
+}
+.chart-tooltip .tt-time { color: var(--ink-muted); font-family: var(--mono); font-size: 0.7rem; margin-bottom: 5px; }
+.chart-tooltip .tt-row { display: flex; align-items: center; gap: 7px; justify-content: space-between; }
+.chart-tooltip .tt-row + .tt-row { margin-top: 3px; }
+.chart-tooltip .tt-name { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-secondary); }
+.chart-tooltip .tt-val { font-family: var(--mono); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ── Tabs ── */
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 20px 0 14px; border-bottom: 1px solid var(--rule); }
+.tab {
+  font: inherit; font-size: 0.84rem; font-weight: 550;
+  padding: 9px 14px; background: none; border: none; cursor: pointer;
+  color: var(--ink-muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.tab:hover { color: var(--ink-primary); }
+.tab[aria-selected="true"] { color: var(--ink-primary); border-bottom-color: var(--series-1); }
+.tab .count {
+  font-family: var(--mono); font-size: 0.7rem; margin-left: 5px;
+  padding: 1px 5px; border-radius: 4px; background: var(--surface-3); color: var(--ink-secondary);
 }
 
-.incident-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 10px;
+/* ── Kill chain ── */
+.killchain { display: flex; flex-direction: column; gap: 9px; }
+.chain-step {
+  display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 13px;
+  align-items: start; padding: 13px 15px;
+  background: var(--surface-1); border: 1px solid var(--rule);
+  border-left: 3px solid var(--ink-muted); border-radius: var(--radius-md);
+  animation: slide-in 0.3s ease both;
+}
+@keyframes slide-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+.chain-step[data-decision="block"]            { border-left-color: var(--state-quarantine); }
+.chain-step[data-decision="require-approval"] { border-left-color: var(--state-human_approval); }
+.chain-step[data-decision="allow"]            { border-left-color: var(--state-normal); }
+.chain-step[data-decision="operator"]         { border-left-color: var(--series-1); }
+.chain-idx {
+  width: 27px; height: 27px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface-3); color: var(--ink-secondary);
+  font-family: var(--mono); font-size: 0.76rem; font-weight: 600;
+}
+.chain-body { min-width: 0; }
+.chain-title { font-size: 0.89rem; font-weight: 620; margin-bottom: 3px; }
+.chain-call { font-family: var(--mono); font-size: 0.75rem; color: var(--series-1); margin-bottom: 6px; word-break: break-word; }
+.chain-narrative { font-size: 0.8rem; color: var(--ink-secondary); line-height: 1.5; }
+.chain-reason {
+  font-size: 0.78rem; margin-top: 8px; padding: 8px 10px;
+  border-radius: var(--radius-sm); background: var(--surface-2);
+  border: 1px solid var(--rule-soft); color: var(--ink-secondary);
+}
+.chain-reason strong { color: var(--ink-primary); font-weight: 600; }
+.chain-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; flex-shrink: 0; }
+.chain-risk { font-family: var(--mono); font-size: 0.95rem; font-weight: 660; font-variant-numeric: tabular-nums; }
+.chain-risk .delta { font-size: 0.72rem; font-weight: 500; margin-left: 3px; }
+.phase-tag {
+  font-family: var(--mono); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 2px 6px; border-radius: 4px; background: var(--surface-3); color: var(--ink-muted);
+}
+.evidence-list { margin: 8px 0 0; padding-left: 17px; font-size: 0.78rem; color: var(--ink-secondary); }
+.evidence-list li { margin-bottom: 3px; }
+.output-pre {
+  margin-top: 8px; padding: 9px 11px; border-radius: var(--radius-sm);
+  background: #090c12; border: 1px solid var(--rule-soft);
+  font-family: var(--mono); font-size: 0.72rem; color: #9fb0c4;
+  white-space: pre-wrap; word-break: break-word; max-height: 190px; overflow-y: auto;
 }
 
-.incident-title {
-  font-family: var(--font-heading);
-  font-weight: 600;
-  font-size: 1rem;
+/* ── Verdict badges ── */
+.verdict {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-size: 0.71rem; font-weight: 680; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid;
 }
+.verdict[data-v="allow"]            { color: #7ede7e; border-color: rgba(12,163,12,0.45);  background: rgba(12,163,12,0.12); }
+.verdict[data-v="block"]            { color: #f0a3a3; border-color: rgba(208,59,59,0.5);   background: rgba(208,59,59,0.13); }
+.verdict[data-v="require-approval"] { color: #c3bbf5; border-color: rgba(144,133,233,0.5); background: rgba(144,133,233,0.13); }
+.verdict[data-v="operator"]         { color: #a9cdfa; border-color: rgba(57,135,229,0.5);  background: rgba(57,135,229,0.13); }
 
-.evidence-list {
-  margin: 10px 0;
-  padding-left: 18px;
-  color: var(--text-secondary);
-  font-size: 0.82rem;
+/* ── Tables ── */
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+th {
+  text-align: left; font-size: 0.7rem; font-weight: 640;
+  text-transform: uppercase; letter-spacing: 0.055em; color: var(--ink-muted);
+  padding: 9px 11px; border-bottom: 1px solid var(--rule); white-space: nowrap;
 }
+td { padding: 11px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+tbody tr:hover td { background: rgba(255,255,255,0.022); }
+.empty { text-align: center; color: var(--ink-muted); padding: 30px 12px; font-size: 0.84rem; }
 
-.evidence-list li {
-  margin-bottom: 4px;
+/* ── Capability tags ── */
+.tag-group { display: flex; flex-wrap: wrap; gap: 4px; max-width: 320px; }
+.tag {
+  font-family: var(--mono); font-size: 0.69rem;
+  padding: 2px 6px; border-radius: 4px;
+  background: var(--surface-3); color: var(--ink-secondary);
+  border: 1px solid var(--rule-soft);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.tag.violation {
+  background: rgba(208,59,59,0.16); border-color: rgba(208,59,59,0.5);
+  color: #f0a3a3; font-weight: 600;
+}
+.tag.none { background: none; border-style: dashed; color: var(--ink-muted); font-style: italic; }
 
-/* Gauge Bar */
-.risk-meter {
-  height: 8px;
-  width: 100%;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
-  overflow: hidden;
-  margin-top: 6px;
+/* ── Event console ── */
+.event-console {
+  font-family: var(--mono); font-size: 0.76rem;
+  max-height: 520px; overflow-y: auto;
+  background: #090c12; border: 1px solid var(--rule-soft); border-radius: var(--radius-sm);
+  padding: 10px;
 }
+.event-line {
+  display: grid; grid-template-columns: 76px 156px minmax(0,1fr) 46px;
+  gap: 10px; padding: 4px 6px; border-radius: 4px; align-items: baseline;
+  animation: slide-in 0.25s ease both;
+}
+.event-line:hover { background: rgba(255,255,255,0.03); }
+.event-time { color: var(--ink-muted); }
+.event-type { font-weight: 600; }
+.event-msg { color: var(--ink-secondary); word-break: break-word; }
+.event-risk { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 
-.risk-fill {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.4s ease;
+/* ── Decision cards ── */
+.decision-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+.decision-card {
+  background: var(--surface-1); border: 1px solid var(--rule);
+  border-left: 3px solid var(--state-quarantine);
+  border-radius: var(--radius-md); padding: 15px;
 }
+.decision-card[data-kind="drift"] { border-left-color: var(--state-restrict); }
+.decision-card[data-kind="approval"] { border-left-color: var(--state-human_approval); }
+.decision-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+.decision-head h3 { font-size: 0.88rem; font-weight: 640; }
+.decision-head time { font-family: var(--mono); font-size: 0.71rem; color: var(--ink-muted); }
+.kv { display: grid; grid-template-columns: 78px minmax(0,1fr); gap: 4px 10px; font-size: 0.79rem; margin-bottom: 9px; }
+.kv dt { color: var(--ink-muted); font-weight: 600; }
+.kv dd { color: var(--ink-secondary); word-break: break-word; }
 
-/* Demo toolbar */
-.demo-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: rgba(139, 92, 246, 0.12);
-  border: 1px solid rgba(139, 92, 246, 0.3);
-  border-radius: var(--radius-md);
-  padding: 14px 20px;
-  margin-bottom: 24px;
+/* ── Receipt ── */
+.hash {
+  font-family: var(--mono); font-size: 0.71rem; color: var(--ink-muted);
+  word-break: break-all; line-height: 1.4;
 }
+.chain-arrow { color: var(--ink-muted); margin: 0 4px; }
 
-.demo-title {
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: #c4b5fd;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* ── Utility ── */
+.mono { font-family: var(--mono); }
+.nowrap { white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
-
-.mono {
-  font-family: var(--font-mono);
+.toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 100;
+  background: var(--surface-3); border: 1px solid var(--rule);
+  border-radius: var(--radius-md); padding: 12px 16px; font-size: 0.83rem;
+  box-shadow: 0 10px 34px rgba(0,0,0,0.55);
+  opacity: 0; transform: translateY(8px); transition: all 0.22s ease; pointer-events: none;
+  max-width: 380px;
 }
+.toast.show { opacity: 1; transform: none; }
+.toast.error { border-color: rgba(208,59,59,0.55); }
 </style>
 </head>
 <body>
 
 <div class="layout">
+
   <header>
     <div class="brand">
-      <div class="brand-icon">
-        <svg viewBox="0 0 24 24"><path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 2 4 5v6.1c0 5 3.4 9.8 8 10.9 4.6-1.1 8-5.9 8-10.9V5l-8-3zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>
       </div>
-      <div class="brand-title">
+      <div>
         <h1>MCP-Sentinel</h1>
-        <p>Adaptive Security Control Plane for Model Context Protocol</p>
+        <p>Adaptive security control plane for the Model Context Protocol</p>
       </div>
     </div>
-
-    <div class="header-controls">
-      <div id="liveBadge" class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">
-        <span class="badge-dot" style="background: #10b981;"></span> Live Monitoring
-      </div>
-      <button class="btn" id="refreshBtn" onclick="fetchData()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        Refresh
-      </button>
+    <div class="header-actions">
+      <span id="livePill" class="live-pill"><span class="live-dot"></span><span id="liveLabel">Connecting</span></span>
+      <button class="btn" id="resetBtn" type="button">Reset control plane</button>
     </div>
   </header>
 
-  <!-- Interactive Demo Bar -->
-  <div class="demo-bar">
-    <div class="demo-title">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-      Hackathon Interactive Demo Simulation
-    </div>
-    <div style="display: flex; gap: 10px;">
-      <button class="btn btn-danger" id="triggerAttackBtn" onclick="triggerRugPull(true)">
-        🔥 Trigger Rug-Pull Malicious Mode
-      </button>
-      <button class="btn" id="resetDemoBtn" onclick="triggerRugPull(false)">
-        🔄 Reset to Clean Baseline
-      </button>
-    </div>
-  </div>
-
-  <!-- Security State Giant Banner -->
-  <div id="stateBanner" class="security-state-banner NORMAL">
-    <div class="banner-content">
-      <div id="stateBadge" class="state-badge-giant" style="background: #10b981; color: #fff;">
-        NORMAL
-      </div>
+  <!-- ════ ATTACK CONSOLE ════ -->
+  <section aria-labelledby="consoleHead">
+    <div class="console-head">
       <div>
-        <div style="font-family: var(--font-heading); font-weight: 700; font-size: 1.15rem;" id="bannerTitle">
-          System Operating Within Baselines
-        </div>
-        <div class="banner-desc" id="bannerDesc">
-          All MCP tools conforming to declared capability profiles. No behavioral drift detected.
-        </div>
+        <h2 id="consoleHead">Attack simulation console</h2>
+        <p>Each scenario spawns real MCP server processes and drives genuine tool calls through the full pipeline. Nothing is scripted after the request leaves.</p>
+      </div>
+      <span id="runStatus" class="live-pill">Idle</span>
+    </div>
+    <div class="scenario-grid" id="scenarioGrid"></div>
+  </section>
+
+  <!-- ════ HERO ════ -->
+  <div class="hero">
+    <div class="state-banner" id="stateBanner" data-state="NORMAL">
+      <span class="state-chip" id="stateChip" style="background: var(--state-normal);">
+        <span class="glyph" aria-hidden="true">●</span><span id="stateChipText">NORMAL</span>
+      </span>
+      <div class="banner-copy">
+        <h2 id="bannerTitle">Operating within baseline</h2>
+        <p id="bannerDesc">All registered tools are conforming to their declared capability profiles.</p>
       </div>
     </div>
-    <div style="text-align: right;">
-      <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Peak Risk Index</div>
-      <div id="peakRiskVal" style="font-family: var(--font-heading); font-size: 2.2rem; font-weight: 800; color: #10b981;">0/100</div>
-    </div>
-  </div>
 
-  <!-- Stats Grid -->
-  <div class="stat-grid">
-    <div class="glass-panel stat-card">
-      <div class="stat-card-title">Risk Engine Assessment</div>
-      <div class="stat-card-value" id="statRiskScore" style="color: #10b981;">0</div>
-      <div class="risk-meter">
-        <div id="riskMeterFill" class="risk-fill" style="width: 0%; background: #10b981;"></div>
+    <div class="panel gauge-card">
+      <div class="gauge">
+        <svg width="104" height="104" viewBox="0 0 104 104" aria-hidden="true">
+          <circle cx="52" cy="52" r="45" fill="none" stroke="var(--grid)" stroke-width="9"/>
+          <circle id="gaugeArc" cx="52" cy="52" r="45" fill="none" stroke="var(--state-normal)"
+                  stroke-width="9" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="283"
+                  style="transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease;"/>
+        </svg>
+        <div class="gauge-value" id="gaugeValue">0</div>
       </div>
-    </div>
-    <div class="glass-panel stat-card">
-      <div class="stat-card-title">Registered Servers</div>
-      <div class="stat-card-value" id="statServers">0</div>
-      <div style="font-size: 0.75rem; color: var(--text-muted);" id="statTools">0 active tools</div>
-    </div>
-    <div class="glass-panel stat-card">
-      <div class="stat-card-title">Quarantined Servers</div>
-      <div class="stat-card-value" id="statQuarantine" style="color: #ef4444;">0</div>
-      <div style="font-size: 0.75rem; color: var(--text-muted);">Execution halted</div>
-    </div>
-    <div class="glass-panel stat-card">
-      <div class="stat-card-title">Blocked Calls</div>
-      <div class="stat-card-value" id="statBlocked" style="color: #f59e0b;">0</div>
-      <div style="font-size: 0.75rem; color: var(--text-muted);">Enforced by Sentinel</div>
-    </div>
-    <div class="glass-panel stat-card">
-      <div class="stat-card-title">Security Incidents</div>
-      <div class="stat-card-value" id="statIncidents" style="color: #8b5cf6;">0</div>
-      <div style="font-size: 0.75rem; color: var(--text-muted);">Recorded in ledger</div>
-    </div>
-  </div>
-
-  <!-- Navigation Tabs -->
-  <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('tools')">Tool Capabilities & Drift</button>
-    <button class="tab-btn" onclick="switchTab('servers')">MCP Servers</button>
-    <button class="tab-btn" onclick="switchTab('timeline')">Risk Timeline & Events</button>
-    <button class="tab-btn" onclick="switchTab('explainer')">Explainable Decisions</button>
-    <button class="tab-btn" onclick="switchTab('approvals')">Pending Approvals</button>
-  </div>
-
-  <!-- TAB: Tool Capabilities -->
-  <div id="tab-tools" class="glass-panel">
-    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Declared vs Authorized vs Observed Capabilities</h3>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Tool Name</th>
-            <th>Server</th>
-            <th>Declared Capabilities</th>
-            <th>Authorized Capabilities</th>
-            <th>Observed Capabilities</th>
-            <th>Behavior Drift</th>
-            <th>Risk</th>
-            <th>State</th>
-          </tr>
-        </thead>
-        <tbody id="toolsTableBody">
-          <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Loading tool capability profiles...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- TAB: MCP Servers -->
-  <div id="tab-servers" class="glass-panel" style="display: none;">
-    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Connected MCP Upstreams & Quarantine Status</h3>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Server ID / Name</th>
-            <th>Trust Status</th>
-            <th>Risk Score</th>
-            <th>Security State</th>
-            <th>Baseline Hash</th>
-            <th>Incidents</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="serversTableBody">
-          <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Loading servers...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- TAB: Risk Timeline & Events -->
-  <div id="tab-timeline" class="glass-panel" style="display: none;">
-    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Structured Security Events & State Transitions</h3>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Event Type</th>
-            <th>Server / Tool</th>
-            <th>Decision</th>
-            <th>Risk</th>
-            <th>State</th>
-            <th>Reasons / Evidence</th>
-          </tr>
-        </thead>
-        <tbody id="eventsTableBody">
-          <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Loading event stream...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- TAB: Explainable Decisions -->
-  <div id="tab-explainer" class="glass-panel" style="display: none;">
-    <h3 style="font-family: var(--font-heading); margin-bottom: 6px;">Explainable Security Decisions</h3>
-    <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 18px;">
-      Every blocked, restricted, or quarantined action provides exact attribution: WHAT, WHY, EVIDENCE, POLICY, and ACTION.
-    </p>
-    <div id="explainerContainer" class="incident-grid">
-      <div style="grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: 20px;">
-        No active security violations or drift incidents recorded.
+      <div class="gauge-meta">
+        <div class="label">Peak risk index</div>
+        <div class="sub" id="gaugeSub">No risk indicators recorded</div>
+        <p class="sub" id="gaugeThreshold" style="font-family: var(--mono); font-size: 0.73rem;"></p>
       </div>
     </div>
   </div>
 
-  <!-- TAB: Pending Approvals -->
-  <div id="tab-approvals" class="glass-panel" style="display: none;">
-    <h3 style="font-family: var(--font-heading); margin-bottom: 14px;">Human Approval Gate (ABAC & Elevated Risk)</h3>
-    <div class="table-container">
+  <!-- ════ STATS ════ -->
+  <div class="stat-row">
+    <div class="stat"><div class="label">Servers</div><div class="value num" id="statServers">0</div><div class="foot" id="statTools">0 tools registered</div></div>
+    <div class="stat"><div class="label">Quarantined</div><div class="value num" id="statQuarantine">0</div><div class="foot">Execution halted</div></div>
+    <div class="stat"><div class="label">Blocked calls</div><div class="value num" id="statBlocked">0</div><div class="foot">Never reached upstream</div></div>
+    <div class="stat"><div class="label">Drifted tools</div><div class="value num" id="statDrift">0</div><div class="foot">Observed ≠ declared</div></div>
+    <div class="stat"><div class="label">Incidents</div><div class="value num" id="statIncidents">0</div><div class="foot">Recorded in ledger</div></div>
+  </div>
+
+  <!-- ════ RISK TIMELINE ════ -->
+  <section class="panel" aria-labelledby="chartTitle">
+    <div class="panel-title"><span id="chartTitle">Risk index over time, by server</span></div>
+    <p class="panel-sub">Deterministic 0–100 score. Dashed guides mark the thresholds at which enforcement changes.</p>
+    <div class="chart-legend" id="chartLegend"></div>
+    <div class="chart-wrap">
+      <svg id="riskChart" viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-labelledby="chartTitle"></svg>
+      <div class="chart-tooltip" id="chartTooltip" role="status"></div>
+    </div>
+    <details style="margin-top: 12px;">
+      <summary style="cursor: pointer; font-size: 0.8rem; color: var(--ink-muted);">View as table</summary>
+      <div class="table-scroll" style="margin-top: 10px; max-height: 240px; overflow-y: auto;">
+        <table><thead><tr><th>Time</th><th>Entity</th><th>Risk</th><th>State</th></tr></thead>
+        <tbody id="timelineTableBody"></tbody></table>
+      </div>
+    </details>
+  </section>
+
+  <!-- ════ TABS ════ -->
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="killchain" aria-selected="true">Kill chain <span class="count" id="cntChain">0</span></button>
+    <button class="tab" role="tab" data-tab="capabilities" aria-selected="false">Capability triad <span class="count" id="cntTools">0</span></button>
+    <button class="tab" role="tab" data-tab="servers" aria-selected="false">Servers <span class="count" id="cntServers">0</span></button>
+    <button class="tab" role="tab" data-tab="events" aria-selected="false">Event stream <span class="count" id="cntEvents">0</span></button>
+    <button class="tab" role="tab" data-tab="decisions" aria-selected="false">Explained decisions</button>
+    <button class="tab" role="tab" data-tab="approvals" aria-selected="false">Approvals <span class="count" id="cntApprovals">0</span></button>
+    <button class="tab" role="tab" data-tab="receipts" aria-selected="false">Receipts <span class="count" id="cntReceipts">0</span></button>
+  </div>
+
+  <section id="panel-killchain" class="panel" role="tabpanel">
+    <div class="panel-title"><span id="chainScenarioName">Kill chain</span></div>
+    <p class="panel-sub" id="chainScenarioSummary">Launch a scenario above to watch the control plane make decisions step by step.</p>
+    <div class="killchain" id="killchain"><div class="empty">No scenario has been run yet.</div></div>
+  </section>
+
+  <section id="panel-capabilities" class="panel" role="tabpanel" hidden>
+    <div class="panel-title"><span>Declared vs authorized vs observed</span></div>
+    <p class="panel-sub">Observed capability is read from real tool responses. An empty observed column means nothing has been observed yet — never an assumption.</p>
+    <div class="table-scroll">
       <table>
-        <thead>
-          <tr>
-            <th>Approval ID</th>
-            <th>Tool Name</th>
-            <th>Requested By</th>
-            <th>Risk Score</th>
-            <th>Reasons</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="approvalsTableBody">
-          <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No pending human approval requests.</td></tr>
-        </tbody>
+        <thead><tr><th>Tool</th><th>Server</th><th>Declared</th><th>Authorized</th><th>Observed</th><th>Conformance</th><th>Risk</th><th>Calls</th></tr></thead>
+        <tbody id="toolsBody"><tr><td colspan="8" class="empty">No tools registered.</td></tr></tbody>
       </table>
     </div>
-  </div>
+  </section>
+
+  <section id="panel-servers" class="panel" role="tabpanel" hidden>
+    <div class="panel-title"><span>Registered upstream servers</span></div>
+    <p class="panel-sub">Trust status, live risk, and containment controls.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Server</th><th>Trust</th><th>Risk</th><th>State</th><th>Baseline hash</th><th>Incidents</th><th>Action</th></tr></thead>
+        <tbody id="serversBody"><tr><td colspan="7" class="empty">No servers registered.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-events" class="panel" role="tabpanel" hidden>
+    <div class="panel-title"><span>Security event stream</span></div>
+    <p class="panel-sub">Pushed live over Server-Sent Events as each decision is made.</p>
+    <div class="event-console" id="eventConsole"><div class="empty">Waiting for events…</div></div>
+  </section>
+
+  <section id="panel-decisions" class="panel" role="tabpanel" hidden>
+    <div class="panel-title"><span>Explained decisions</span></div>
+    <p class="panel-sub">Every restrictive action answers: what happened, why, on what evidence, under which policy.</p>
+    <div class="decision-grid" id="decisionGrid"><div class="empty">No restrictive decisions recorded.</div></div>
+  </section>
+
+  <section id="panel-approvals" class="panel" role="tabpanel" hidden>
+    <div class="panel-title"><span>Human approval queue</span></div>
+    <p class="panel-sub">Approving issues a single-use, time-boxed grant so the retried call actually proceeds.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Request</th><th>Tool</th><th>Requested by</th><th>Risk</th><th>Reasons</th><th>Action</th></tr></thead>
+        <tbody id="approvalsBody"><tr><td colspan="6" class="empty">No pending approvals.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-receipts" class="panel" role="tabpanel" hidden>
+    <div class="panel-title"><span>Verifiable decision receipts</span></div>
+    <p class="panel-sub">Each decision is hashed with SHA-256 over its canonical payload, producing a tamper-evident audit trail.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Receipt</th><th>Tool</th><th>Decision</th><th>Risk</th><th>Prior tools</th><th>SHA-256</th></tr></thead>
+        <tbody id="receiptsBody"><tr><td colspan="6" class="empty">No receipts recorded.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 </div>
 
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
 <script>
-let activeTab = 'tools';
+"use strict";
 
-function switchTab(tabId) {
-  activeTab = tabId;
-  ['tools', 'servers', 'timeline', 'explainer', 'approvals'].forEach(t => {
-    document.getElementById(`tab-${t}`).style.display = t === tabId ? 'block' : 'none';
+// ═══════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════
+const S = {
+  scenarios: [],
+  runningScenario: null,
+  chainSteps: [],
+  events: [],
+  tools: [],
+  servers: [],
+  approvals: [],
+  receipts: [],
+  timeline: [],
+  overview: null,
+  thresholds: { monitor: 26, restrict: 51, approval: 76, quarantine: 91 },
+};
+
+const STATE_ORDER = ["NORMAL", "MONITOR", "RESTRICT", "HUMAN_APPROVAL", "QUARANTINE"];
+const STATE_GLYPH = { NORMAL: "●", MONITOR: "◆", RESTRICT: "▲", HUMAN_APPROVAL: "⬢", QUARANTINE: "■" };
+const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
+
+function stateColor(state) {
+  return `var(--state-${String(state || "NORMAL").toLowerCase()})`;
+}
+function riskColor(score) {
+  const t = S.thresholds;
+  if (score >= t.quarantine) return "var(--state-quarantine)";
+  if (score >= t.approval) return "var(--state-human_approval)";
+  if (score >= t.restrict) return "var(--state-restrict)";
+  if (score >= t.monitor) return "var(--state-monitor)";
+  return "var(--state-normal)";
+}
+
+/**
+ * Escape untrusted text before it reaches innerHTML.
+ * Tool output, descriptors and server names all originate from upstream MCP
+ * servers, which in this product are explicitly assumed hostile. Rendering any
+ * of it unescaped would let a malicious server script the console that is
+ * supposed to be watching it.
+ */
+function esc(value) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function fmtTime(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  return Number.isNaN(d.getTime()) ? "--:--:--" : d.toLocaleTimeString([], { hour12: false });
+}
+
+let toastTimer;
+function toast(message, isError) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.classList.toggle("error", !!isError);
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 4200);
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
+  return data;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Tabs
+// ═══════════════════════════════════════════════════════════
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((t) => {
+      const on = t === tab;
+      t.setAttribute("aria-selected", String(on));
+      document.getElementById(`panel-${t.dataset.tab}`).hidden = !on;
+    });
   });
-  document.querySelectorAll('.tab-btn').forEach((btn, idx) => {
-    const tabs = ['tools', 'servers', 'timeline', 'explainer', 'approvals'];
-    btn.classList.toggle('active', tabs[idx] === tabId);
-  });
-}
+});
 
-function getStateColor(state) {
-  switch (state) {
-    case 'NORMAL': return '#10b981';
-    case 'MONITOR': return '#06b6d4';
-    case 'RESTRICT': return '#f59e0b';
-    case 'HUMAN_APPROVAL': return '#ec4899';
-    case 'QUARANTINE': return '#ef4444';
-    default: return '#94a3b8';
-  }
-}
-
-function renderCaps(caps, isObserved = false, declared = null) {
-  if (!caps) return '<span class="text-muted">None</span>';
-  const list = [];
-  
-  if (Array.isArray(caps.filesystem) && caps.filesystem.length > 0) {
-    caps.filesystem.forEach(f => {
-      const isMismatch = isObserved && declared && (!declared.filesystem || !declared.filesystem.includes(f));
-      list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">fs:${f}</span>`);
-    });
-  }
-  if (Array.isArray(caps.network) && caps.network.length > 0) {
-    caps.network.forEach(n => {
-      const isMismatch = isObserved && declared && (!declared.network || !declared.network.includes(n));
-      list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">net:${n}</span>`);
-    });
-  }
-  if (Array.isArray(caps.processes) && caps.processes.length > 0) {
-    caps.processes.forEach(p => {
-      const isMismatch = isObserved && declared && (!declared.processes || !declared.processes.includes(p));
-      list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">proc:${p}</span>`);
-    });
-  }
-  if (caps.envAccess) {
-    const isMismatch = isObserved && declared && !declared.envAccess;
-    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">env_access</span>`);
-  }
-  if (caps.externalNetwork) {
-    const isMismatch = isObserved && declared && !declared.externalNetwork;
-    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">external_net</span>`);
-  }
-  if (caps.sensitiveFileAccess) {
-    const isMismatch = isObserved && declared && !declared.sensitiveFileAccess;
-    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">sensitive_files</span>`);
-  }
-  if (caps.commandExecution) {
-    const isMismatch = isObserved && declared && !declared.commandExecution;
-    list.push(`<span class="cap-tag ${isMismatch ? 'mismatch' : ''}">cmd_exec</span>`);
-  }
-
-  return list.length > 0 ? `<div class="caps-container">${list.join('')}</div>` : '<span class="text-muted">none</span>';
-}
-
-async function fetchData() {
-  try {
-    const [stateRes, serversRes, toolsRes, eventsRes, approvalsRes] = await Promise.all([
-      fetch('/api/sentinel/state').then(r => r.json()).catch(() => null),
-      fetch('/api/sentinel/servers').then(r => r.json()).catch(() => []),
-      fetch('/api/sentinel/tools').then(r => r.json()).catch(() => []),
-      fetch('/api/sentinel/events?limit=50').then(r => r.json()).catch(() => []),
-      fetch('/api/sentinel/approvals').then(r => r.json()).catch(() => []),
-    ]);
-
-    if (stateRes) {
-      updateOverview(stateRes);
-    }
-    if (serversRes) {
-      renderServers(serversRes);
-    }
-    if (toolsRes) {
-      renderTools(toolsRes);
-    }
-    if (eventsRes) {
-      renderEvents(eventsRes);
-      renderExplainer(eventsRes);
-    }
-    if (approvalsRes) {
-      renderApprovals(approvalsRes);
-    }
-  } catch (err) {
-    console.error('Error fetching dashboard data', err);
-  }
-}
-
-function updateOverview(overview) {
-  const state = overview.overallState || 'NORMAL';
-  const score = overview.maxRiskScore || 0;
-  const color = getStateColor(state);
-
-  // Banner
-  const banner = document.getElementById('stateBanner');
-  banner.className = `security-state-banner ${state}`;
-  const badge = document.getElementById('stateBadge');
-  badge.textContent = state;
-  badge.style.background = color;
-
-  document.getElementById('peakRiskVal').textContent = `${score}/100`;
-  document.getElementById('peakRiskVal').style.color = color;
-
-  if (state === 'QUARANTINE') {
-    document.getElementById('bannerTitle').textContent = '⚠️ CRITICAL: Server Quarantined — Execution Halted';
-    document.getElementById('bannerDesc').textContent = 'One or more MCP servers violated declared capabilities and exceeded quarantine risk threshold.';
-  } else if (state === 'RESTRICT' || state === 'HUMAN_APPROVAL') {
-    document.getElementById('bannerTitle').textContent = '⚡ Elevated Risk — Adaptive Policies Enforcing Restrictions';
-    document.getElementById('bannerDesc').textContent = 'High-risk operations restricted and sensitive actions requiring human authorization.';
-  } else if (state === 'MONITOR') {
-    document.getElementById('bannerTitle').textContent = '👁️ Enhanced Telemetry & Monitoring Active';
-    document.getElementById('bannerDesc').textContent = 'Behavioral anomalies observed; elevated observation active.';
-  } else {
-    document.getElementById('bannerTitle').textContent = 'System Operating Within Normal Baselines';
-    document.getElementById('bannerDesc').textContent = 'All MCP tools conforming to declared capability profiles.';
-  }
-
-  // Stats
-  document.getElementById('statRiskScore').textContent = score;
-  document.getElementById('statRiskScore').style.color = color;
-  const fill = document.getElementById('riskMeterFill');
-  fill.style.width = `${Math.min(score, 100)}%`;
-  fill.style.background = color;
-
-  document.getElementById('statServers').textContent = overview.totalServers || 0;
-  document.getElementById('statTools').textContent = `${overview.totalTools || 0} registered tools`;
-  document.getElementById('statQuarantine').textContent = overview.quarantinedServers || 0;
-  document.getElementById('statBlocked').textContent = overview.blockedCalls || 0;
-  document.getElementById('statIncidents').textContent = overview.activeIncidents || 0;
-}
-
-function renderTools(tools) {
-  const tbody = document.getElementById('toolsTableBody');
-  if (!tools || tools.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No tools registered yet</td></tr>';
+// ═══════════════════════════════════════════════════════════
+// Scenario console
+// ═══════════════════════════════════════════════════════════
+function renderScenarios() {
+  const grid = document.getElementById("scenarioGrid");
+  if (!S.scenarios.length) {
+    grid.innerHTML = '<div class="empty">Scenario engine not enabled on this gateway.</div>';
     return;
   }
-
-  tbody.innerHTML = tools.map(t => {
-    const riskColor = t.riskScore > 75 ? '#ef4444' : t.riskScore > 50 ? '#f59e0b' : t.riskScore > 25 ? '#06b6d4' : '#10b981';
-    const hasDrift = t.currentFingerprint && t.baselineFingerprint && (
-      (t.currentFingerprint.envAccess && !t.baselineFingerprint.envAccess) ||
-      (t.currentFingerprint.externalNetwork && !t.baselineFingerprint.externalNetwork) ||
-      (t.currentFingerprint.sensitiveFileAccess && !t.baselineFingerprint.sensitiveFileAccess) ||
-      (t.currentFingerprint.filesystem.some(f => !t.baselineFingerprint.filesystem.includes(f)))
-    );
-
-    return `
-      <tr>
-        <td style="font-weight: 600; color: #fff;">${t.toolName}</td>
-        <td class="mono text-muted" style="font-size: 0.8rem;">${t.serverId}</td>
-        <td>${renderCaps(t.declaredCapabilities)}</td>
-        <td>${renderCaps(t.authorizedCapabilities)}</td>
-        <td>${renderCaps(t.currentFingerprint || t.declaredCapabilities, true, t.declaredCapabilities)}</td>
-        <td>
-          ${hasDrift 
-            ? '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4);">DRIFT DETECTED</span>'
-            : '<span class="badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399;">CONFORMANT</span>'
-          }
-        </td>
-        <td>
-          <span style="font-weight: 700; color: ${riskColor};">${t.riskScore}</span>
-        </td>
-        <td>
-          <span class="badge" style="background: ${getStateColor(t.state === 'QUARANTINED' ? 'QUARANTINE' : 'NORMAL')}; color: #fff;">
-            ${t.state}
-          </span>
-        </td>
-      </tr>
-    `;
-  }).join('');
-}
-
-function renderServers(servers) {
-  const tbody = document.getElementById('serversTableBody');
-  if (!servers || servers.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No upstream servers registered</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = servers.map(s => {
-    const isQuarantined = s.trustStatus === 'QUARANTINED' || s.securityState === 'QUARANTINE';
-    return `
-      <tr>
-        <td>
-          <div style="font-weight: 600; color: #fff;">${s.serverName}</div>
-          <div class="mono" style="font-size: 0.75rem; color: var(--text-muted);">${s.serverId}</div>
-        </td>
-        <td>
-          <span class="badge" style="background: ${isQuarantined ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.2)'}; color: ${isQuarantined ? '#fca5a5' : '#34d399'}; border: 1px solid ${isQuarantined ? '#ef4444' : '#10b981'};">
-            ${s.trustStatus}
-          </span>
-        </td>
-        <td>
-          <span style="font-weight: 700; color: ${getStateColor(s.securityState)};">${s.currentRisk}</span>
-        </td>
-        <td>
-          <span class="badge" style="background: ${getStateColor(s.securityState)}; color: #fff;">
-            ${s.securityState}
-          </span>
-        </td>
-        <td class="mono text-muted" style="font-size: 0.75rem;">
-          ${s.baselineHash ? s.baselineHash.slice(0, 12) + '...' : 'none'}
-        </td>
-        <td style="font-weight: 600;">${s.incidentCount || 0}</td>
-        <td>
-          ${isQuarantined 
-            ? `<button class="btn btn-primary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="recoverServer('${s.serverId}')">Recover</button>`
-            : `<button class="btn btn-danger" style="padding: 4px 10px; font-size: 0.75rem;" onclick="quarantineServer('${s.serverId}')">Quarantine</button>`
-          }
-        </td>
-      </tr>
-    `;
-  }).join('');
-}
-
-function renderEvents(events) {
-  const tbody = document.getElementById('eventsTableBody');
-  if (!events || events.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No security events recorded yet</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = events.slice().reverse().map(e => {
-    const time = new Date(e.timestamp).toLocaleTimeString();
-    const isBlock = e.decision === 'block';
-    return `
-      <tr>
-        <td class="mono" style="font-size: 0.78rem; color: var(--text-muted);">${time}</td>
-        <td>
-          <span class="cap-tag" style="color: #fff; background: rgba(255,255,255,0.08);">${e.type}</span>
-        </td>
-        <td>
-          <div style="font-weight: 500;">${e.toolName || e.serverName || 'System'}</div>
-          <div class="mono" style="font-size: 0.72rem; color: var(--text-muted);">${e.serverName || ''}</div>
-        </td>
-        <td>
-          <span class="badge" style="background: ${isBlock ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)'}; color: ${isBlock ? '#fca5a5' : '#34d399'};">
-            ${e.decision || 'recorded'}
-          </span>
-        </td>
-        <td style="font-weight: 600; color: ${getStateColor(e.securityState || 'NORMAL')};">${e.riskScore ?? '-'}</td>
-        <td>
-          <span class="badge" style="background: ${getStateColor(e.securityState || 'NORMAL')}; color: #fff; font-size: 0.7rem;">
-            ${e.securityState || 'NORMAL'}
-          </span>
-        </td>
-        <td style="font-size: 0.8rem; color: var(--text-secondary); max-width: 320px;">
-          ${Array.isArray(e.reasons) ? e.reasons.join('; ') : (e.reasons || '')}
-        </td>
-      </tr>
-    `;
-  }).join('');
-}
-
-function renderExplainer(events) {
-  const container = document.getElementById('explainerContainer');
-  const violationEvents = events.filter(e => e.decision === 'block' || e.type === 'BEHAVIOR_DRIFT' || e.type === 'SERVER_QUARANTINED');
-
-  if (violationEvents.length === 0) {
-    container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: 20px;">No active security violations or drift incidents recorded.</div>';
-    return;
-  }
-
-  container.innerHTML = violationEvents.slice(-6).reverse().map(e => {
-    const isQuarantine = e.type === 'SERVER_QUARANTINED' || e.securityState === 'QUARANTINE';
-    return `
-      <div class="incident-card ${isQuarantine ? '' : 'drift'}">
-        <div class="incident-header">
-          <div class="incident-title" style="color: ${isQuarantine ? '#fca5a5' : '#fde68a'};">
-            ${isQuarantine ? '🔴 Server Quarantined' : '⚠️ Behavioral Drift Detected'}
-          </div>
-          <span class="mono" style="font-size: 0.75rem; color: var(--text-muted);">
-            ${new Date(e.timestamp).toLocaleTimeString()}
-          </span>
-        </div>
-        <div style="font-size: 0.85rem; margin-bottom: 8px;">
-          <strong>Target:</strong> <span class="mono">${e.serverName}/${e.toolName || 'all'}</span> | 
-          <strong>Risk Score:</strong> <span style="color: ${getStateColor(e.securityState)}; font-weight: 700;">${e.riskScore}</span>
-        </div>
-        <div style="font-size: 0.82rem; color: #cbd5e1; margin-bottom: 6px;"><strong>Evidence & Findings:</strong></div>
-        <ul class="evidence-list">
-          ${Array.isArray(e.reasons) && e.reasons.length > 0 
-            ? e.reasons.map(r => `<li>${r}</li>`).join('') 
-            : '<li>Capability mismatch vs established baseline</li>'
-          }
-        </ul>
-        <div style="font-size: 0.8rem; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between;">
-          <span><strong>Policy Applied:</strong> <span class="mono">${e.policy || 'adaptive-runtime-policy'}</span></span>
-          <span><strong>Action Taken:</strong> <span style="font-weight: 600; color: ${isQuarantine ? '#ef4444' : '#f59e0b'};">${e.decision || 'BLOCKED'}</span></span>
-        </div>
+  grid.innerHTML = S.scenarios.map((sc) => `
+    <button class="scenario-card ${S.runningScenario === sc.id ? "running" : ""}"
+            data-scenario="${esc(sc.id)}" type="button" ${S.runningScenario ? "disabled" : ""}>
+      <h3>${esc(sc.name)}</h3>
+      <p>${esc(sc.summary)}</p>
+      <div class="scenario-meta">
+        <span class="technique-tag">${esc(sc.technique)}</span>
+        <span>${sc.stepCount} steps</span>
       </div>
-    `;
-  }).join('');
+    </button>
+  `).join("");
+
+  grid.querySelectorAll("[data-scenario]").forEach((btn) => {
+    btn.addEventListener("click", () => launchScenario(btn.dataset.scenario));
+  });
 }
 
-function renderApprovals(approvals) {
-  const tbody = document.getElementById('approvalsTableBody');
-  if (!approvals || approvals.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No pending human approval requests</td></tr>';
+async function launchScenario(id) {
+  const scenario = S.scenarios.find((s) => s.id === id);
+  try {
+    await api(`/api/sentinel/scenarios/${encodeURIComponent(id)}/run`, { method: "POST" });
+    S.runningScenario = id;
+    S.chainSteps = [];
+    document.getElementById("chainScenarioName").textContent = scenario ? scenario.name : "Kill chain";
+    document.getElementById("chainScenarioSummary").textContent = scenario ? scenario.expectedOutcome : "";
+    document.getElementById("killchain").innerHTML = '<div class="empty">Executing…</div>';
+    setRunStatus(true);
+    renderScenarios();
+    document.querySelector('.tab[data-tab="killchain"]').click();
+    toast(`Running: ${scenario ? scenario.name : id}`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function setRunStatus(running) {
+  const el = document.getElementById("runStatus");
+  el.className = `live-pill ${running ? "online" : ""}`;
+  el.textContent = running ? "Scenario running" : "Idle";
+}
+
+document.getElementById("resetBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/sentinel/scenarios/reset", { method: "POST" });
+    S.chainSteps = []; S.events = []; S.runningScenario = null;
+    document.getElementById("killchain").innerHTML = '<div class="empty">No scenario has been run yet.</div>';
+    document.getElementById("eventConsole").innerHTML = '<div class="empty">Waiting for events…</div>';
+    document.getElementById("chainScenarioName").textContent = "Kill chain";
+    document.getElementById("chainScenarioSummary").textContent =
+      "Launch a scenario above to watch the control plane make decisions step by step.";
+    setRunStatus(false);
+    await refreshAll();
+    toast("Control plane reset to a clean baseline");
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// Kill chain
+// ═══════════════════════════════════════════════════════════
+function renderKillChain() {
+  const host = document.getElementById("killchain");
+  document.getElementById("cntChain").textContent = S.chainSteps.length;
+
+  if (!S.chainSteps.length) {
+    host.innerHTML = '<div class="empty">No scenario has been run yet.</div>';
     return;
   }
 
-  tbody.innerHTML = approvals.map(a => `
+  host.innerHTML = S.chainSteps.map((step) => {
+    const call = step.decision === "operator"
+      ? `operator · ${esc(step.policy.replace("operator:", ""))}`
+      : `${esc(step.server)}__${esc(step.tool)}(${esc(JSON.stringify(step.args || {}))})`;
+
+    const drift = step.driftFindings && step.driftFindings.length
+      ? `<ul class="evidence-list">${step.driftFindings
+          .filter((f) => f.type !== "BEHAVIOR_DRIFT").slice(0, 6)
+          .map((f) => `<li><strong>${esc(f.type)}</strong> — ${esc(f.message)}</li>`).join("")}</ul>`
+      : "";
+
+    const semantic = step.semanticFindings && step.semanticFindings.length
+      ? `<ul class="evidence-list">${step.semanticFindings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`
+      : "";
+
+    const mismatch = step.expected && !step.met
+      ? `<div class="chain-reason" style="border-color: rgba(250,178,25,0.5);">
+           <strong>Expectation mismatch</strong> — scenario expected <code>${esc(step.expected)}</code>,
+           control plane returned <code>${esc(step.decision)}</code>.
+         </div>`
+      : "";
+
+    const output = step.outputPreview
+      ? `<div class="output-pre">${esc(step.outputPreview)}</div>`
+      : "";
+
+    const deltaTxt = step.riskDelta
+      ? `<span class="delta" style="color: ${step.riskDelta > 0 ? "var(--state-quarantine)" : "var(--state-normal)"};">${step.riskDelta > 0 ? "+" : ""}${step.riskDelta}</span>`
+      : "";
+
+    return `
+      <article class="chain-step" data-decision="${esc(step.decision)}">
+        <div class="chain-idx">${step.index + 1}</div>
+        <div class="chain-body">
+          <div class="chain-title">${esc(step.title)}</div>
+          <div class="chain-call">${call}</div>
+          <div class="chain-narrative">${esc(step.narrative)}</div>
+          <div class="chain-reason">
+            <strong>${step.executed ? "Verdict" : "Blocked before execution"}:</strong>
+            ${esc(step.reason)} <span class="mono" style="color: var(--ink-muted);">[${esc(step.policy)}]</span>
+          </div>
+          ${semantic}${drift}${mismatch}${output}
+        </div>
+        <div class="chain-side">
+          <span class="verdict" data-v="${esc(step.decision)}">${esc(step.decision.replace("-", " "))}</span>
+          <span class="chain-risk" style="color: ${riskColor(step.riskScore)};">${step.riskScore}${deltaTxt}</span>
+          <span class="state-chip" style="background: ${stateColor(step.securityState)}; font-size: 0.68rem; padding: 2px 7px;">
+            <span class="glyph" aria-hidden="true">${STATE_GLYPH[step.securityState] || "●"}</span>${esc(step.securityState)}
+          </span>
+          <span class="phase-tag">${esc(step.phase)}</span>
+        </div>
+      </article>`;
+  }).join("");
+
+  const last = host.lastElementChild;
+  if (last && S.runningScenario) last.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Overview / hero
+// ═══════════════════════════════════════════════════════════
+const BANNER_COPY = {
+  NORMAL: ["Operating within baseline", "All registered tools are conforming to their declared capability profiles."],
+  MONITOR: ["Enhanced monitoring active", "Behavioural anomalies observed. Telemetry retention and scrutiny increased."],
+  RESTRICT: ["Restricted — destructive operations blocked", "Risk has crossed the restrict threshold. Read-only work continues; destructive tools do not."],
+  HUMAN_APPROVAL: ["Human approval required", "Elevated risk. Tool calls are queued for an operator decision before execution."],
+  QUARANTINE: ["Quarantined — execution halted", "A server exceeded the quarantine threshold. All of its tool calls are hard-blocked."],
+};
+
+function renderOverview() {
+  const o = S.overview;
+  if (!o) return;
+  const state = o.overallState || "NORMAL";
+  const score = o.maxRiskScore || 0;
+  const color = stateColor(state);
+
+  const banner = document.getElementById("stateBanner");
+  banner.dataset.state = state;
+  const chip = document.getElementById("stateChip");
+  chip.style.background = color;
+  document.getElementById("stateChipText").textContent = state;
+  chip.querySelector(".glyph").textContent = STATE_GLYPH[state] || "●";
+
+  const [title, desc] = BANNER_COPY[state] || BANNER_COPY.NORMAL;
+  document.getElementById("bannerTitle").textContent = title;
+  document.getElementById("bannerDesc").textContent = desc;
+
+  const arc = document.getElementById("gaugeArc");
+  const circumference = 283;
+  arc.style.strokeDashoffset = String(circumference - (Math.min(score, 100) / 100) * circumference);
+  arc.style.stroke = riskColor(score);
+  const gv = document.getElementById("gaugeValue");
+  gv.textContent = score;
+  gv.style.color = riskColor(score);
+
+  document.getElementById("gaugeSub").textContent =
+    score === 0 ? "No risk indicators recorded" : `Highest-risk server is in ${state.replace("_", " ").toLowerCase()}`;
+  const t = S.thresholds;
+  document.getElementById("gaugeThreshold").textContent =
+    `monitor ${t.monitor} · restrict ${t.restrict} · approval ${t.approval} · quarantine ${t.quarantine}`;
+
+  document.getElementById("statServers").textContent = o.totalServers || 0;
+  document.getElementById("statTools").textContent = `${o.totalTools || 0} tools registered`;
+  document.getElementById("statQuarantine").textContent = o.quarantinedServers || 0;
+  document.getElementById("statBlocked").textContent = o.blockedCalls || 0;
+  document.getElementById("statIncidents").textContent = o.activeIncidents || 0;
+  document.getElementById("statQuarantine").style.color =
+    (o.quarantinedServers || 0) > 0 ? "var(--state-quarantine)" : "var(--ink-primary)";
+}
+
+// ═══════════════════════════════════════════════════════════
+// Risk timeline chart
+// ═══════════════════════════════════════════════════════════
+const CHART = { w: 900, h: 260, pad: { t: 14, r: 96, b: 26, l: 38 } };
+let chartSeries = [];
+
+function renderChart() {
+  const svg = document.getElementById("riskChart");
+  const { w, h, pad } = CHART;
+  const plotW = w - pad.l - pad.r;
+  const plotH = h - pad.t - pad.b;
+
+  // Group the timeline into one series per entity.
+  const byEntity = new Map();
+  for (const point of S.timeline) {
+    if (!byEntity.has(point.entityId)) byEntity.set(point.entityId, []);
+    byEntity.get(point.entityId).push(point);
+  }
+
+  const serverName = new Map(S.servers.map((s) => [s.serverId, s.serverName]));
+  chartSeries = [...byEntity.entries()]
+    .slice(0, 3)
+    .map(([entityId, points], i) => ({
+      id: entityId,
+      label: serverName.get(entityId) || entityId,
+      color: SERIES[i % SERIES.length],
+      points,
+    }));
+
+  const allPoints = chartSeries.flatMap((s) => s.points);
+  const yFor = (score) => pad.t + plotH - (Math.max(0, Math.min(100, score)) / 100) * plotH;
+
+  // Threshold guides — recessive, dashed, labelled.
+  const guides = [
+    ["monitor", S.thresholds.monitor, "var(--state-monitor)"],
+    ["restrict", S.thresholds.restrict, "var(--state-restrict)"],
+    ["approval", S.thresholds.approval, "var(--state-human_approval)"],
+    ["quarantine", S.thresholds.quarantine, "var(--state-quarantine)"],
+  ].map(([name, value, color]) => `
+    <line x1="${pad.l}" y1="${yFor(value)}" x2="${pad.l + plotW}" y2="${yFor(value)}"
+          stroke="${color}" stroke-width="1" stroke-dasharray="3 4" opacity="0.4"/>
+    <text x="${pad.l + plotW + 6}" y="${yFor(value) + 3.5}" fill="var(--ink-muted)"
+          font-size="10" font-family="var(--mono)">${name} ${value}</text>`).join("");
+
+  const yTicks = [0, 25, 50, 75, 100].map((v) => `
+    <line x1="${pad.l}" y1="${yFor(v)}" x2="${pad.l + plotW}" y2="${yFor(v)}"
+          stroke="var(--grid)" stroke-width="1"/>
+    <text x="${pad.l - 7}" y="${yFor(v) + 3.5}" fill="var(--ink-muted)" font-size="10"
+          text-anchor="end" font-family="var(--mono)">${v}</text>`).join("");
+
+  if (!allPoints.length) {
+    svg.innerHTML = `${yTicks}${guides}
+      <text x="${pad.l + plotW / 2}" y="${pad.t + plotH / 2}" fill="var(--ink-muted)"
+            font-size="12" text-anchor="middle">Run a scenario to plot risk over time</text>`;
+    document.getElementById("chartLegend").innerHTML = "";
+    document.getElementById("timelineTableBody").innerHTML =
+      '<tr><td colspan="4" class="empty">No data.</td></tr>';
+    return;
+  }
+
+  const times = allPoints.map((p) => new Date(p.timestamp).getTime());
+  const tMin = Math.min(...times);
+  const tMax = Math.max(...times);
+  const span = Math.max(1, tMax - tMin);
+  const xFor = (ts) => pad.l + ((new Date(ts).getTime() - tMin) / span) * plotW;
+
+  const paths = chartSeries.map((s) => {
+    if (!s.points.length) return "";
+    const d = s.points
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${xFor(p.timestamp).toFixed(1)} ${yFor(p.score).toFixed(1)}`)
+      .join(" ");
+    const last = s.points[s.points.length - 1];
+    const lx = xFor(last.timestamp);
+    const ly = yFor(last.score);
+    return `
+      <path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"
+            stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="4.5" fill="${s.color}"
+              stroke="var(--surface-1)" stroke-width="2"/>
+      <text x="${(lx + 9).toFixed(1)}" y="${(ly + 3.5).toFixed(1)}" fill="${s.color}"
+            font-size="11" font-weight="600" font-family="var(--mono)">${last.score}</text>`;
+  }).join("");
+
+  const xTicks = [0, 0.5, 1].map((f) => {
+    const ts = tMin + span * f;
+    const x = pad.l + f * plotW;
+    return `<text x="${x}" y="${h - 8}" fill="var(--ink-muted)" font-size="10"
+                  text-anchor="${f === 0 ? "start" : f === 1 ? "end" : "middle"}"
+                  font-family="var(--mono)">${fmtTime(ts)}</text>`;
+  }).join("");
+
+  svg.innerHTML = `${yTicks}${guides}${paths}${xTicks}
+    <line id="crosshair" y1="${pad.t}" y2="${pad.t + plotH}" stroke="var(--ink-muted)"
+          stroke-width="1" stroke-dasharray="3 3" opacity="0"/>
+    <rect id="hitArea" x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}"
+          fill="transparent" style="cursor: crosshair;"/>`;
+
+  // Legend — always present for 2+ series; a single series is named by the title.
+  document.getElementById("chartLegend").innerHTML = chartSeries.length >= 2
+    ? chartSeries.map((s) => `
+        <span class="legend-item">
+          <span class="legend-swatch" style="background: ${s.color};"></span>${esc(s.label)}
+        </span>`).join("")
+    : "";
+
+  document.getElementById("timelineTableBody").innerHTML = S.timeline.slice(-60).reverse().map((p) => `
     <tr>
-      <td class="mono">${a.id}</td>
-      <td style="font-weight: 600;">${a.toolName}</td>
-      <td>${a.userId} (${a.userRole})</td>
-      <td style="font-weight: 700; color: #ec4899;">${a.riskScore}</td>
-      <td style="font-size: 0.8rem; color: var(--text-secondary);">${(a.reasons || []).join(', ')}</td>
-      <td><span class="badge" style="background: rgba(236,72,153,0.2); color: #f472b6;">${a.status}</span></td>
-      <td>
-        <button class="btn btn-primary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="decideApproval('${a.id}', 'approve')">Approve</button>
-        <button class="btn btn-danger" style="padding: 4px 8px; font-size: 0.75rem;" onclick="decideApproval('${a.id}', 'deny')">Deny</button>
+      <td class="mono">${fmtTime(p.timestamp)}</td>
+      <td>${esc(serverName.get(p.entityId) || p.entityId)}</td>
+      <td class="num mono" style="color: ${riskColor(p.score)};">${p.score}</td>
+      <td>${esc(p.state)}</td>
+    </tr>`).join("");
+
+  attachChartHover(xFor, tMin, span, plotW, plotH, pad);
+}
+
+function attachChartHover(xFor, tMin, span, plotW, plotH, pad) {
+  const svg = document.getElementById("riskChart");
+  const hit = svg.querySelector("#hitArea");
+  const crosshair = svg.querySelector("#crosshair");
+  const tip = document.getElementById("chartTooltip");
+  if (!hit) return;
+
+  hit.addEventListener("mousemove", (ev) => {
+    const box = svg.getBoundingClientRect();
+    const svgX = ((ev.clientX - box.left) / box.width) * CHART.w;
+    const ts = tMin + ((svgX - pad.l) / plotW) * span;
+
+    crosshair.setAttribute("x1", String(svgX));
+    crosshair.setAttribute("x2", String(svgX));
+    crosshair.setAttribute("opacity", "0.55");
+
+    const rows = chartSeries.map((s) => {
+      let nearest = null;
+      let best = Infinity;
+      for (const p of s.points) {
+        const dist = Math.abs(new Date(p.timestamp).getTime() - ts);
+        if (dist < best) { best = dist; nearest = p; }
+      }
+      if (!nearest) return "";
+      return `<div class="tt-row">
+          <span class="tt-name"><span class="legend-swatch" style="background: ${s.color};"></span>${esc(s.label)}</span>
+          <span class="tt-val" style="color: ${riskColor(nearest.score)};">${nearest.score}</span>
+        </div>`;
+    }).join("");
+
+    tip.innerHTML = `<div class="tt-time">${fmtTime(ts)}</div>${rows}`;
+    tip.style.opacity = "1";
+    const localX = ev.clientX - box.left;
+    tip.style.left = `${Math.min(Math.max(localX + 14, 0), box.width - 170)}px`;
+    tip.style.top = `${Math.max(ev.clientY - box.top - 10, 0)}px`;
+  });
+
+  hit.addEventListener("mouseleave", () => {
+    crosshair.setAttribute("opacity", "0");
+    tip.style.opacity = "0";
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Tables
+// ═══════════════════════════════════════════════════════════
+function tagList(items, violations) {
+  if (!items || !items.length) return '<span class="tag none">none observed</span>';
+  const bad = new Set(violations || []);
+  return `<div class="tag-group">${items.slice(0, 8).map((t) =>
+    `<span class="tag ${bad.has(t) ? "violation" : ""}" title="${esc(t)}">${esc(t)}</span>`).join("")}${
+    items.length > 8 ? `<span class="tag">+${items.length - 8}</span>` : ""}</div>`;
+}
+
+function renderTools() {
+  const body = document.getElementById("toolsBody");
+  document.getElementById("cntTools").textContent = S.tools.length;
+  document.getElementById("statDrift").textContent = S.tools.filter((t) => t.hasDrift).length;
+
+  if (!S.tools.length) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">No tools registered.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = S.tools.map((t) => {
+    const conformance = t.hasDrift
+      ? '<span class="verdict" data-v="block">drift</span>'
+      : t.hasBaseline
+        ? '<span class="verdict" data-v="allow">conformant</span>'
+        : '<span class="tag none">no baseline</span>';
+    return `
+      <tr>
+        <td><strong>${esc(t.toolName)}</strong><div class="mono" style="font-size: 0.7rem; color: var(--ink-muted);">${esc(t.criticality)} · ${esc(t.sensitivity)}</div></td>
+        <td>${esc(t.serverName)}</td>
+        <td>${tagList(t.declaredCapabilities)}</td>
+        <td>${tagList(t.authorizedCapabilities)}</td>
+        <td>${tagList(t.observedCapabilities, t.unauthorizedCapabilities)}</td>
+        <td>${conformance}</td>
+        <td class="num mono" style="color: ${riskColor(t.riskScore)}; font-weight: 600;">${t.riskScore}</td>
+        <td class="num mono">${t.callCount}</td>
+      </tr>`;
+  }).join("");
+}
+
+function renderServers() {
+  const body = document.getElementById("serversBody");
+  document.getElementById("cntServers").textContent = S.servers.length;
+
+  if (!S.servers.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">No servers registered.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = S.servers.map((s) => `
+    <tr>
+      <td><strong>${esc(s.serverName)}</strong><div class="mono" style="font-size: 0.7rem; color: var(--ink-muted);">${esc(s.serverId)}</div></td>
+      <td><span class="tag ${s.quarantined ? "violation" : ""}">${esc(s.trustStatus)}</span></td>
+      <td class="num mono" style="color: ${riskColor(s.currentRisk)}; font-weight: 600;">${s.currentRisk}</td>
+      <td><span class="state-chip" style="background: ${stateColor(s.securityState)}; font-size: 0.68rem; padding: 2px 7px;">
+        <span class="glyph" aria-hidden="true">${STATE_GLYPH[s.securityState] || "●"}</span>${esc(s.securityState)}</span></td>
+      <td class="hash">${s.baselineHash ? esc(s.baselineHash.slice(0, 16)) + "…" : "—"}</td>
+      <td class="num mono">${s.incidentCount || 0}</td>
+      <td>${s.quarantined
+        ? `<button class="btn btn-sm btn-accent" data-recover="${esc(s.serverId)}" type="button">Recover</button>`
+        : `<button class="btn btn-sm btn-danger" data-quarantine="${esc(s.serverId)}" type="button">Quarantine</button>`}</td>
+    </tr>`).join("");
+
+  body.querySelectorAll("[data-quarantine]").forEach((btn) =>
+    btn.addEventListener("click", () => serverAction(btn.dataset.quarantine, "quarantine")));
+  body.querySelectorAll("[data-recover]").forEach((btn) =>
+    btn.addEventListener("click", () => serverAction(btn.dataset.recover, "recover")));
+}
+
+async function serverAction(serverId, action) {
+  try {
+    await api(`/api/sentinel/servers/${encodeURIComponent(serverId)}/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Operator action from console", approvedBy: "console_operator" }),
+    });
+    toast(action === "quarantine" ? "Server quarantined — all tool calls now blocked" : "Server recovered to MONITOR");
+    await refreshAll();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function renderEvents() {
+  const host = document.getElementById("eventConsole");
+  document.getElementById("cntEvents").textContent = S.events.length;
+
+  if (!S.events.length) {
+    host.innerHTML = '<div class="empty">Waiting for events…</div>';
+    return;
+  }
+
+  host.innerHTML = S.events.slice(-200).reverse().map((e) => {
+    const reasons = Array.isArray(e.reasons) ? e.reasons.join("; ") : e.reasons || "";
+    return `
+      <div class="event-line">
+        <span class="event-time">${fmtTime(e.timestamp)}</span>
+        <span class="event-type" style="color: ${stateColor(e.securityState)};">${esc(e.type)}</span>
+        <span class="event-msg">${esc(e.serverName || "")}${e.toolName ? "/" + esc(e.toolName) : ""} — ${esc(reasons)}</span>
+        <span class="event-risk" style="color: ${riskColor(e.riskScore || 0)};">${e.riskScore ?? "—"}</span>
+      </div>`;
+  }).join("");
+}
+
+function renderDecisions() {
+  const host = document.getElementById("decisionGrid");
+  const notable = S.events.filter((e) =>
+    e.decision === "block" || e.type === "BEHAVIOR_DRIFT" ||
+    e.type === "SERVER_QUARANTINED" || e.type === "APPROVAL_REQUIRED");
+
+  if (!notable.length) {
+    host.innerHTML = '<div class="empty">No restrictive decisions recorded.</div>';
+    return;
+  }
+
+  host.innerHTML = notable.slice(-12).reverse().map((e) => {
+    const kind = e.type === "SERVER_QUARANTINED" ? "quarantine"
+      : e.type === "APPROVAL_REQUIRED" ? "approval" : "drift";
+    const heading = {
+      quarantine: "Server quarantined",
+      approval: "Human approval required",
+      drift: e.decision === "block" ? "Call blocked" : "Behavioural drift detected",
+    }[kind];
+    const reasons = Array.isArray(e.reasons) ? e.reasons : [e.reasons].filter(Boolean);
+    const evidence = Array.isArray(e.evidence) ? e.evidence : [];
+
+    return `
+      <article class="decision-card" data-kind="${kind}">
+        <div class="decision-head">
+          <h3>${esc(heading)}</h3>
+          <time>${fmtTime(e.timestamp)}</time>
+        </div>
+        <dl class="kv">
+          <dt>What</dt><dd class="mono">${esc(e.serverName || "system")}${e.toolName ? "/" + esc(e.toolName) : ""}</dd>
+          <dt>Risk</dt><dd style="color: ${riskColor(e.riskScore || 0)}; font-weight: 600;">${e.riskScore ?? 0} / 100 · ${esc(e.securityState || "NORMAL")}</dd>
+          <dt>Policy</dt><dd class="mono">${esc(e.policy || "—")}</dd>
+          <dt>Action</dt><dd><span class="verdict" data-v="${esc(e.decision === "block" ? "block" : "require-approval")}">${esc(e.decision || e.type)}</span></dd>
+        </dl>
+        <div style="font-size: 0.79rem; color: var(--ink-muted); font-weight: 600; margin-bottom: 4px;">Why</div>
+        <ul class="evidence-list">${reasons.slice(0, 5).map((r) => `<li>${esc(r)}</li>`).join("") || "<li>—</li>"}</ul>
+        ${evidence.length ? `
+          <div style="font-size: 0.79rem; color: var(--ink-muted); font-weight: 600; margin: 8px 0 4px;">Evidence</div>
+          <ul class="evidence-list">${evidence.slice(0, 4).map((x) => `<li class="mono">${esc(x)}</li>`).join("")}</ul>` : ""}
+      </article>`;
+  }).join("");
+}
+
+function renderApprovals() {
+  const body = document.getElementById("approvalsBody");
+  document.getElementById("cntApprovals").textContent = S.approvals.length;
+
+  if (!S.approvals.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No pending approvals.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = S.approvals.map((a) => `
+    <tr>
+      <td class="mono" style="font-size: 0.72rem;">${esc(a.id)}</td>
+      <td><strong>${esc(a.toolName)}</strong></td>
+      <td>${esc(a.userId)} <span class="tag">${esc(a.userRole)}</span></td>
+      <td class="num mono" style="color: ${riskColor(a.riskScore)};">${a.riskScore}</td>
+      <td style="max-width: 320px; color: var(--ink-secondary); font-size: 0.78rem;">${esc((a.reasons || []).join("; "))}</td>
+      <td class="nowrap">
+        <button class="btn btn-sm btn-accent" data-approve="${esc(a.id)}" type="button">Approve</button>
+        <button class="btn btn-sm btn-danger" data-deny="${esc(a.id)}" type="button">Deny</button>
       </td>
-    </tr>
-  `).join('');
-}
+    </tr>`).join("");
 
-async function triggerRugPull(active) {
-  try {
-    const res = await fetch('/api/sentinel/trigger-malicious', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serverName: 'rugpull-server', active })
-    });
-    const data = await res.json();
-    alert(data.message || (active ? 'Rug-pull malicious behavior triggered!' : 'Reset to baseline!'));
-    fetchData();
-  } catch (err) {
-    alert('Error triggering demo mode: ' + err);
-  }
-}
-
-async function quarantineServer(serverId) {
-  if (!confirm(`Are you sure you want to quarantine server ${serverId}? All future tool executions will be blocked.`)) return;
-  try {
-    const res = await fetch(`/api/sentinel/servers/${serverId}/quarantine`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: 'Operator initiated quarantine from dashboard' })
-    });
-    fetchData();
-  } catch (err) {
-    alert('Failed to quarantine server: ' + err);
-  }
-}
-
-async function recoverServer(serverId) {
-  if (!confirm(`Recover server ${serverId}? It will transition to MONITOR state with enhanced telemetry.`)) return;
-  try {
-    const res = await fetch(`/api/sentinel/servers/${serverId}/recover`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approvedBy: 'admin_dashboard' })
-    });
-    fetchData();
-  } catch (err) {
-    alert('Failed to recover server: ' + err);
-  }
+  body.querySelectorAll("[data-approve]").forEach((btn) =>
+    btn.addEventListener("click", () => decideApproval(btn.dataset.approve, "approve")));
+  body.querySelectorAll("[data-deny]").forEach((btn) =>
+    btn.addEventListener("click", () => decideApproval(btn.dataset.deny, "deny")));
 }
 
 async function decideApproval(id, action) {
   try {
-    await fetch(`/api/sentinel/approvals/${id}/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decidedBy: 'admin' })
+    await api(`/api/sentinel/approvals/${encodeURIComponent(id)}/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decidedBy: "console_operator" }),
     });
-    fetchData();
+    toast(action === "approve"
+      ? "Approved — a single-use grant was issued so the retry can proceed"
+      : "Denied");
+    await refreshAll();
   } catch (err) {
-    alert(`Failed to ${action} approval: ` + err);
+    toast(err.message, true);
   }
 }
 
-// Initial fetch and auto-refresh loop
-fetchData();
-setInterval(fetchData, 2000);
+function renderReceipts() {
+  const body = document.getElementById("receiptsBody");
+  document.getElementById("cntReceipts").textContent = S.receipts.length;
+
+  if (!S.receipts.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No receipts recorded.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = S.receipts.slice(0, 40).map((r) => `
+    <tr>
+      <td class="mono" style="font-size: 0.72rem;">${esc(r.receiptId)}<div style="color: var(--ink-muted);">${fmtTime(r.timestamp)}</div></td>
+      <td><strong>${esc(r.tool)}</strong><div class="mono" style="font-size: 0.7rem; color: var(--ink-muted);">${esc(r.server)}</div></td>
+      <td><span class="verdict" data-v="${r.decision === "BLOCK" || r.decision === "QUARANTINE" ? "block" : "allow"}">${esc(r.decision)}</span></td>
+      <td class="num mono" style="color: ${riskColor(r.riskScore)};">${r.riskScore}</td>
+      <td style="font-size: 0.76rem; color: var(--ink-secondary);">${
+        (r.previousTools || []).length
+          ? (r.previousTools || []).map((t) => esc(t)).join('<span class="chain-arrow">→</span>')
+          : "—"}</td>
+      <td class="hash" style="max-width: 210px;">${esc(r.hash)}</td>
+    </tr>`).join("");
+}
+
+// ═══════════════════════════════════════════════════════════
+// Data loading
+// ═══════════════════════════════════════════════════════════
+async function refreshAll() {
+  const [overview, servers, tools, events, approvals, receipts, timeline] = await Promise.all([
+    api("/api/sentinel/state").catch(() => null),
+    api("/api/sentinel/servers").catch(() => []),
+    api("/api/sentinel/tools").catch(() => []),
+    api("/api/sentinel/events?limit=200").catch(() => []),
+    api("/api/sentinel/approvals").catch(() => []),
+    api("/api/sentinel/receipts").catch(() => []),
+    api("/api/sentinel/timeline").catch(() => []),
+  ]);
+
+  if (overview && overview.overallState) S.overview = overview;
+  S.servers = Array.isArray(servers) ? servers : [];
+  S.tools = Array.isArray(tools) ? tools : [];
+  S.events = Array.isArray(events) ? events : [];
+  S.approvals = Array.isArray(approvals) ? approvals : [];
+  S.receipts = Array.isArray(receipts) ? receipts : [];
+  S.timeline = Array.isArray(timeline) ? timeline : [];
+
+  renderOverview(); renderServers(); renderTools();
+  renderEvents(); renderDecisions(); renderApprovals(); renderReceipts(); renderChart();
+}
+
+async function loadScenarios() {
+  try {
+    const data = await api("/api/sentinel/scenarios");
+    S.scenarios = (data && data.scenarios) || [];
+    if (data && data.running) { S.runningScenario = "…"; setRunStatus(true); }
+    renderScenarios();
+  } catch {
+    S.scenarios = [];
+    renderScenarios();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Live stream (SSE) with automatic reconnect
+// ═══════════════════════════════════════════════════════════
+let stream = null;
+let reconnectDelay = 1000;
+
+function setLive(status) {
+  const pill = document.getElementById("livePill");
+  pill.className = `live-pill ${status}`;
+  document.getElementById("liveLabel").textContent =
+    status === "online" ? "Live" : status === "offline" ? "Reconnecting" : "Connecting";
+}
+
+function connectStream() {
+  if (stream) stream.close();
+  stream = new EventSource("/api/sentinel/stream");
+
+  stream.onopen = () => { setLive("online"); reconnectDelay = 1000; };
+
+  stream.onerror = () => {
+    setLive("offline");
+    stream.close();
+    // Exponential backoff, capped — a closed laptop lid should not produce
+    // thousands of reconnect attempts.
+    setTimeout(connectStream, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+  };
+
+  stream.addEventListener("overview", (ev) => {
+    try {
+      S.overview = JSON.parse(ev.data);
+      renderOverview();
+    } catch { /* malformed frame — drop it */ }
+  });
+
+  stream.addEventListener("security-event", (ev) => {
+    try {
+      const event = JSON.parse(ev.data);
+      S.events.push(event);
+      if (S.events.length > 400) S.events.shift();
+      renderEvents();
+      renderDecisions();
+    } catch { /* ignore */ }
+  });
+
+  stream.addEventListener("scenario-step", (ev) => {
+    try {
+      const step = JSON.parse(ev.data);
+      S.chainSteps.push(step);
+      renderKillChain();
+      refreshAll();
+    } catch { /* ignore */ }
+  });
+
+  stream.addEventListener("scenario-complete", (ev) => {
+    try {
+      const run = JSON.parse(ev.data);
+      S.runningScenario = null;
+      setRunStatus(false);
+      renderScenarios();
+      refreshAll();
+      toast(`${run.name} complete — ${run.blocked} blocked, ${run.approvalsRequired} approvals, peak risk ${run.peakRisk}` +
+        (run.expectationsMet ? " · all expectations met" : " · expectation mismatch"),
+        !run.expectationsMet);
+    } catch { /* ignore */ }
+  });
+
+  stream.addEventListener("scenario-error", (ev) => {
+    try {
+      const err = JSON.parse(ev.data);
+      S.runningScenario = null;
+      setRunStatus(false);
+      renderScenarios();
+      toast(`Scenario failed: ${err.error}`, true);
+    } catch { /* ignore */ }
+  });
+
+  stream.addEventListener("reset", () => refreshAll());
+}
+
+// ═══════════════════════════════════════════════════════════
+// Boot
+// ═══════════════════════════════════════════════════════════
+setLive("");
+loadScenarios();
+refreshAll();
+connectStream();
+// Safety net: the SSE stream carries everything, but a slow poll keeps the
+// console correct if a frame is ever dropped.
+setInterval(refreshAll, 10000);
 </script>
 </body>
 </html>

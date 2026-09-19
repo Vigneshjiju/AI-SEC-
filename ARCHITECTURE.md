@@ -1,134 +1,219 @@
-# MCP-Sentinel: Architectural Specification
+# MCP-Sentinel — Architecture
 
-## 1. System Overview
+## 1. Position in the stack
 
-**MCP-Sentinel** is an adaptive security control plane for the Model Context Protocol (MCP). It operates as an intelligent proxy between AI Agents / MCP Clients and backend MCP servers.
-
-Unlike traditional static proxies that only inspect descriptors or enforce fixed rate limits, MCP-Sentinel continuously observes tool behavior across execution lifecycles, compares observed execution against cryptographic baselines, dynamically scores risk, and adapts enforcement policies in real time.
+MCP-Sentinel is an in-line control plane between an AI agent (or MCP client) and
+the MCP servers it calls. It speaks MCP on both sides, so it is transparent to
+clients: point the client at the gateway instead of at the servers.
 
 ```
-                    ┌─────────────────────────┐
-                    │  AI Agent / MCP Client  │
-                    └────────────┬────────────┘
-                                 │ JSON-RPC (MCP)
+                      ┌──────────────────────┐
+                      │  AI agent / client   │
+                      └──────────┬───────────┘
+                                 │ JSON-RPC (stdio)
                                  ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                         MCP-SENTINEL GATEWAY                           │
-│                                                                        │
-│   1. AUTH & IDENTITY       2. HARD SECURITY RULES                      │
-│      Keycloak/Dev RBAC        Quarantine & Schema Validation           │
-│              │                               │                         │
-│              ▼                               ▼                         │
-│   3. STATE EVALUATION      4. ADAPTIVE POLICY ENGINE                   │
-│      Normal/Monitor/          Allow, Restrict, Human-Approval,         │
-│      Restrict/Approval/Quar   Quarantine Enforcement                   │
-│              │                               │                         │
-│              ▼                               ▼                         │
-│   5. UPSTREAM EXECUTION    6. BEHAVIORAL DRIFT ANALYSIS                │
-│      Call MCP Server          Declared vs Authorized vs Observed       │
-│              │                               │                         │
-│              ▼                               ▼                         │
-│   7. RISK ENGINE           8. STATE TRANSITION & TELEMETRY             │
-│      Weighted 0-100 Score     Pub/Sub Event Bus & Audit Logging        │
-└────────────────────────────────┬───────────────────────────────────────┘
-                                 │ Upstream Stdio / SSE
+┌────────────────────────────────────────────────────────────────┐
+│                       MCP-SENTINEL                             │
+│                                                                │
+│  PRE-EXECUTION                     POST-EXECUTION              │
+│  ──────────────                    ───────────────             │
+│  1  Identity verification          6  Behaviour fingerprint    │
+│  2  Hard quarantine rule           7  Baseline comparison      │
+│  3  Input validation               8  Runtime guard + output   │
+│  4  Capability lease               9  Risk assessment          │
+│  5  Contextual sequence           10  State transition         │
+│       · data-flow taint           11  Quarantine, lease revoke │
+│       · capability-tier RBAC      12  Decision receipt         │
+│       · approval gate                                          │
+└────────────────────────────────┬───────────────────────────────┘
                                  ▼
-                    ┌─────────────────────────┐
-                    │       MCP Servers       │
-                    │  SOC Tools / Marketplace│
-                    └─────────────────────────┘
+                      ┌──────────────────────┐
+                      │  MCP servers         │
+                      │  (assumed hostile)   │
+                      └──────────────────────┘
 ```
+
+The decisive property is that **6–12 run after the response comes back**. Every
+other MCP security layer stops at step 5.
 
 ---
 
-## 2. The Core Security Feedback Loop
+## 2. The capability triad
 
-MCP-Sentinel enforces the closed-loop cycle:
-
-$$\text{Validate} \longrightarrow \text{Observe} \longrightarrow \text{Assess Risk} \longrightarrow \text{Apply Policy} \longrightarrow \text{Control} \longrightarrow \text{Observe Again} \circlearrowleft$$
-
-1. **Validate**: Check caller identity, tool registration, and hard security rules (e.g. is the server quarantined? Does the user role permit this action?).
-2. **Observe**: Capture tool execution response, output patterns, referenced file paths, network destinations, and execution duration.
-3. **Assess Risk**: Feed observed findings into the weighted deterministic risk engine. Compute updated risk score (0–100) and identify contributing factors.
-4. **Apply Policy**: Feed the updated risk score and context into the adaptive state machine. Transition state if thresholds are met.
-5. **Control**: Enforce the security state on subsequent interactions (e.g., permit, require human approval, restrict destructive tools, or terminate all access via quarantine).
-6. **Observe Again**: Continuous monitoring of all subsequent calls.
-
----
-
-## 3. The Capability Model: Declared vs. Authorized vs. Observed
-
-The core research paradigm of MCP-Sentinel addresses the divergence between what a tool says it does and what it actually does.
-
-| Capability Layer | Definition | Storage Location |
+| Layer | Stored in | Derived from |
 |---|---|---|
-| **Declared Capability** | What the tool author claims the tool accesses in its documentation or schema. | `ToolRegistration.declaredCapabilities` |
-| **Authorized Capability** | What enterprise security policies permit this tool to access in production. | `ToolRegistration.authorizedCapabilities` |
-| **Observed Capability** | What runtime observation discovers the tool accessing during actual execution. | `BehaviorFingerprint` (Current) |
+| **Declared** | `ToolRegistration.declaredCapabilities` | Inferred from the tool's own descriptor (`inferDeclaredCapabilities`) |
+| **Authorized** | `ToolRegistration.authorizedCapabilities` | Starts as a copy of declared; narrowed by policy |
+| **Observed** | `ToolRegistration.currentFingerprint` | Extracted from real tool responses |
 
-### Detection Matrix:
-- If $\text{Observed} \subseteq \text{Declared}$: **Conformant** (Risk Delta = 0).
-- If $\text{Observed} \not\subseteq \text{Declared}$: **Behavioral Drift Detected** ($\Delta \text{Risk} > 0$).
-- If $\text{Observed} \not\subseteq \text{Authorized}$: **Policy Violation / Hard Block Triggered**.
+- `Observed ⊄ Declared` → **behavioural drift**, contributes risk
+- `Observed ⊄ Authorized` → **capability violation**, contributes risk and can block
+
+### Why inference matters
+
+Registering a tool with an empty declared set makes the comparison meaningless —
+every legitimate URL in any response becomes a "violation". Reading the declaration
+out of the descriptor is what makes declared-vs-observed a real comparison.
+
+### Semantic comparison
+
+`BehaviorEngine.assessConformance` compares meaning, not strings:
+
+- private/loopback/link-local destinations are **not** external egress
+- a declared scope of `*` means "declared, unconstrained"
+- a declared host allowlist is matched by containment, not equality
+- sensitive paths are violations whenever `sensitiveFileAccess` is unauthorized
 
 ---
 
-## 4. Subsystem Breakdown
+## 3. Risk engine
 
-### 4.1. Adaptive Controller (`src/sentinel/adaptive-controller.ts`)
-The central orchestrator connecting all Sentinel modules. It handles:
-- `preExecute(ctx)`: Invoked before tool dispatch. Checks server quarantine, verifies user permissions via `AuthManager`, evaluates state policies via `PolicyEngine`, and intercepts sensitive actions for human approval.
-- `postExecute(ctx, output, duration)`: Invoked immediately following tool execution. Extracts output text, generates an observed `BehaviorFingerprint`, runs `compareFingerprint`, calculates risk via `RiskEngine`, evaluates state transitions via `SecurityStateMachine`, and triggers auto-quarantine if risk exceeds threshold.
+Instantaneous score from the current observation:
 
-### 4.2. Behavior Fingerprint Engine (`src/sentinel/behavior.ts`)
-Inspects tool outputs and execution telemetry using structured regular expression extractors and pattern matching:
-- **Filesystem Access**: Unix/Windows paths, `/etc/shadow`, `.env`, `.ssh/id_rsa`, `.aws/credentials`.
-- **Network Exfiltration**: External HTTP/HTTPS URLs, IP addresses, WebSocket destinations.
-- **Process Spawning**: `exec()`, `child_process`, `subprocess.Popen`, shell commands (`curl`, `sh`, `bash`).
-- **Environment Access**: `process.env`, `os.environ`, API key patterns.
-- Generates structured `BehaviorDriftFinding[]` with severity ratings (`critical`, `high`, `medium`, `low`).
+```
+instant = Σ (factorᵢ)  bounded [0,100]
 
-### 4.3. Deterministic Risk Engine (`src/sentinel/risk-engine.ts`)
-Computes an explainable score between 0 and 100:
+integrity     descriptor change, missing baseline
+behavior      drift findings, weighted by type
+runtime       capability-firewall violations
+authorization role mismatch, capability mismatch
+sensitivity   sensitive file / env access
+anomaly       prior incidents, output anomalies, frequency
+```
 
-$$\text{Risk} = \min\left(100, \sum_{i \in \text{factors}} \text{Weight}_i \times \text{ObservedSeverity}_i\right)$$
+Blended with persistent state:
 
-- **Configurable Weights**:
-  - `behavior`: 30%
-  - `runtime`: 20%
-  - `integrity`: 15%
-  - `authorization`: 15%
-  - `sensitivity`: 10%
-  - `anomaly`: 10%
-- **Explainability Guarantee**: Every score update returns a `reasons` array documenting exactly which factors contributed points.
+```
+carried = previous × 0.5 ^ (elapsed / halfLifeMs)
+score   = min(100, max(instant, carried) + instant × accumulation)
+```
 
-### 4.4. Security State Machine (`src/sentinel/state-machine.ts`)
-Maintains server and tool security state across 5 stages:
+**Defaults**: `halfLifeMs` 120 000, `accumulation` 0.35.
 
-$$\text{NORMAL (0–25)} \longrightarrow \text{MONITOR (26–50)} \longrightarrow \text{RESTRICT (51–75)} \longrightarrow \text{HUMAN\_APPROVAL (76–90)} \longrightarrow \text{QUARANTINE (91–100)}$$
+Three consequences that matter:
 
-- **Hysteresis**: Escalations occur immediately to safeguard the agent. De-escalation requires satisfying cooldown timers and score margins to eliminate flapping.
+1. A compromised server cannot clear itself by returning one clean response.
+2. Repeated hostile behaviour compounds into quarantine rather than plateauing.
+3. Genuinely reformed behaviour decays back to zero without operator toil.
 
-### 4.5. Quarantine Manager (`src/sentinel/quarantine.ts`)
-Enforces server containment:
-- Immediately flags server trust status as `QUARANTINED`.
-- Blocks all subsequent tool calls via pre-execution interceptor.
-- Stores forensic evidence record (`quarantineHistory`).
-- Provides a controlled recovery endpoint (`recoverServer`). When recovered by an administrator, the server transitions to `MONITOR` (never directly to `NORMAL`).
+Every assessment returns `reasons[]` naming each contributing factor, including
+carried risk and compounding, so a score is always auditable.
 
-### 4.6. Authentication & RBAC (`src/sentinel/auth.ts`)
-- Role tiers: `viewer`, `analyst`, `incident_responder`, `admin`.
-- Architecture designed for Keycloak / OIDC JWT validation with dev-mode bearer token support (`Bearer dev:<user>:<role>`).
-- **Just-In-Time (JIT) Temporary Grants**: Allows granting emergency capability elevation with automatic expiration after $N$ seconds.
+---
 
-### 4.7. Glassmorphic Dashboard & REST APIs (`src/dashboard/`)
-- HTTP REST API server exposing endpoints:
-  - `GET /api/sentinel/state`
-  - `GET /api/sentinel/servers`
-  - `GET /api/sentinel/tools`
-  - `GET /api/sentinel/events`
-  - `GET /api/sentinel/approvals`
-  - `POST /api/sentinel/servers/:id/quarantine`
-  - `POST /api/sentinel/servers/:id/recover`
-  - `POST /api/sentinel/trigger-malicious`
-- Cyber-dark interface built with Vanilla CSS glassmorphism, responsive status banners, real-time risk gauges, and explainable decision cards.
+## 4. Security state machine
+
+```
+NORMAL(0–25) → MONITOR(26–50) → RESTRICT(51–75) → HUMAN_APPROVAL(76–90) → QUARANTINE(91+)
+```
+
+Thresholds are configurable. Behaviour:
+
+- **Escalation** applies immediately — security takes priority over stability.
+- **De-escalation** requires being below the current threshold by `margin` *and*
+  having spent `cooldownMs` in the state. This is what prevents flapping.
+- **Quarantine** is enforced by a hard rule checked before risk is consulted at all.
+  Recovery is an operator action that lands in `MONITOR`.
+
+---
+
+## 5. Authorization
+
+`capability-model.ts` is the single source of truth for "what class of thing does
+this tool do", used by **both** the RBAC layer and the sequence analyser — so a tool
+is never classified one way for authorization and another way for context.
+
+Resolution order for a tool: explicit profile → name heuristic → description
+heuristic → `UNKNOWN` (gated at the analyst tier, never treated as harmless).
+
+Authorization resolves most-specific-first:
+
+1. Admin / wildcard
+2. Active JIT grant (by tool name **or** capability class)
+3. Explicit named role permission
+4. Capability-tier permission
+
+Step 4 is what lets policy cover third-party servers whose tool names were never
+enumerated — the normal case for an MCP gateway.
+
+---
+
+## 6. Contextual sequence analysis
+
+Answers: *is this action reasonable given what this workflow has already done?*
+
+Dangerous patterns:
+
+| Pattern | Verdict |
+|---|---|
+| recon → SECRET_ACCESS → DATA_TRANSFER | **block** (ATT&CK exfiltration) |
+| recon → DATA_TRANSFER without incident logging | **block** |
+| SECRET_ACCESS → INFRASTRUCTURE_CONTROL | **block** |
+| recon → SECRET_ACCESS | **require approval** (plausible mid-incident) |
+| READ → EXTERNAL_LOOKUP → WRITE | **allow** (conformant investigation) |
+
+The distinction is deliberate: escalate the suspicious-but-plausible step to a
+human; hard-block the irreversible one.
+
+---
+
+## 7. Approvals
+
+`PolicyEngine.approveRequest` issues a **single-use, time-boxed grant** keyed by
+`serverId::tool::userId`. The next matching call redeems it via
+`consumeApprovalGrant` and proceeds under policy `approval-granted`.
+
+Without the grant, approval only mutates a status field: the agent retries, hits
+the same rule, and opens another request — an infinite loop. The grant is consumed
+on redemption, so approval authorizes one action, not a standing permission.
+
+---
+
+## 8. Scenario engine
+
+`scenario-engine.ts` drives end-to-end scenarios against real MCP servers:
+
+- spawns fixtures as child processes over `StdioClientTransport`
+- registers servers and tools from the **actual** `tools/list` response
+- for each step: `preExecute` → real `tools/call` → `postExecute`
+- re-reads descriptors on demand and runs the Semantic Change Firewall over diffs
+- supports operator steps: recovery, JIT grants, approvals, revalidation
+- streams `ScenarioStepResult` to subscribers (the console consumes these via SSE)
+- verifies each step against the scenario's declared expectation
+
+Because every step carries an expectation, a regression in the control plane makes
+scenarios **fail visibly** rather than silently printing a success narrative.
+
+---
+
+## 9. Dashboard
+
+`dashboard/server.ts` exposes:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/sentinel/stream` | SSE: security events, scenario steps, overview |
+| `GET /api/sentinel/scenarios` | Scenario catalogue |
+| `POST /api/sentinel/scenarios/:id/run` | Launch (202, progress over SSE) |
+| `POST /api/sentinel/scenarios/reset` | Clean baseline |
+| `GET /api/sentinel/{state,servers,tools,events,timeline,receipts,approvals,leases,grants,workflows}` | Telemetry |
+| `POST /api/sentinel/servers/:id/{quarantine,recover}` | Containment |
+| `POST /api/sentinel/approvals/:id/{approve,deny}` | Approval decisions |
+
+Presentation shaping happens server-side so the console stays a pure view. The
+console is one self-contained HTML file — no external fonts or scripts — and
+escapes all untrusted text before rendering, since tool output originates from
+servers the system explicitly assumes are hostile.
+
+---
+
+## 10. Trust boundaries
+
+| Boundary | Assumption |
+|---|---|
+| MCP client → gateway | Authenticated; role claims verified, never taken on trust |
+| Gateway → MCP server | **Fully untrusted** — descriptors, arguments and responses are all adversarial input |
+| Tool response → risk engine | Untrusted data, parsed defensively |
+| Dashboard → control plane | Operator-authenticated in deployment; local-only by default |
+
+See [THREAT_MODEL.md](THREAT_MODEL.md) for what this design does and does not cover.

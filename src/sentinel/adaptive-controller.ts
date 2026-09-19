@@ -18,7 +18,8 @@ import type {
   QuarantineRecord,
   UserIdentity,
 } from "./types.js";
-import { defaultSentinelConfig, createEmptyFingerprint, createEmptyCapabilitySet } from "./types.js";
+import type { DeepPartial } from "./types.js";
+import { mergeSentinelConfig, createEmptyFingerprint, createEmptyCapabilitySet } from "./types.js";
 import { ServerRegistry } from "./registry.js";
 import { BehaviorEngine } from "./behavior.js";
 import { RiskEngine, type RiskEvidence } from "./risk-engine.js";
@@ -72,20 +73,24 @@ export class AdaptiveController {
   readonly receiptsLedger: DecisionReceiptsLedger;
 
   private maliciousModeServers: Set<string> = new Set();
+  /** Monotonic counter — `Date.now()` alone collides for events in the same ms. */
+  private eventSeq = 0;
 
-  constructor(config?: Partial<SentinelConfig>) {
-    this.config = { ...defaultSentinelConfig(), ...config };
+  constructor(config?: DeepPartial<SentinelConfig>) {
+    // Deep merge: a config that supplies only `risk.thresholds` must still get
+    // the default weights, hysteresis and decay settings.
+    this.config = mergeSentinelConfig(config);
     this.registry = new ServerRegistry();
     this.behaviorEngine = new BehaviorEngine(this.config);
     this.riskEngine = new RiskEngine(this.config);
     this.stateMachine = new SecurityStateMachine(this.config);
     this.eventBus = new SentinelEventBus();
-    this.policyEngine = new PolicyEngine(this.config, this.registry);
+    this.authManager = new AuthManager(this.config.auth.mode, this.config.auth.defaultRole);
+    this.policyEngine = new PolicyEngine(this.config, this.registry, this.authManager);
     this.runtimeGuard = new RuntimeGuard(this.config);
     this.quarantineManager = new QuarantineManager(this.registry, this.stateMachine, this.eventBus);
     this.outputScanner = new OutputScanner();
     this.outputValidator = new OutputValidator();
-    this.authManager = new AuthManager(this.config.auth.mode, this.config.auth.defaultRole);
     this.identityVerifier = new IdentityVerifier();
     this.semanticFirewall = new SemanticChangeFirewall();
     this.leaseManager = new CapabilityLeaseManager(this.eventBus);
@@ -174,8 +179,9 @@ export class AdaptiveController {
     }
 
     // ── 5. Contextual Tool-Call Engine & Capability Transition Analysis ──
+    let contextualResult: import("./contextual-engine.js").ContextualEvaluationResult | undefined;
     if (ctx.workflowId) {
-      const contextualResult = this.contextualEngine.evaluateToolCall({
+      contextualResult = this.contextualEngine.evaluateToolCall({
         workflowId: ctx.workflowId,
         userId: ctx.userId,
         agentId: ctx.agentId,
@@ -194,6 +200,21 @@ export class AdaptiveController {
           serverId,
           toolId,
           Math.max(server?.currentRisk ?? 0, 80),
+          contextualResult
+        );
+      }
+
+      // A `restrict` verdict on a dangerous sequence is a block in practice —
+      // there is no weaker enforcement point downstream, so letting it fall
+      // through would silently permit the very sequence we just flagged.
+      if (contextualResult.action === "restrict" && contextualResult.isDangerousSequence) {
+        return this.createBlockDecision(
+          ctx,
+          contextualResult.reason,
+          "contextual-engine-restrict",
+          serverId,
+          toolId,
+          Math.max(server?.currentRisk ?? 0, 65),
           contextualResult
         );
       }
@@ -233,7 +254,29 @@ export class AdaptiveController {
       securityState: currentState,
     };
 
-    const policyDecision = this.policyEngine.evaluate(enrichedCtx);
+    let policyDecision = this.policyEngine.evaluate(enrichedCtx);
+
+    // The contextual engine can demand approval for a call the stateless policy
+    // would wave through (e.g. a SECRET_ACCESS tool reached after recon). Merge
+    // that verdict in rather than discarding it — but never downgrade an
+    // already-redeemed human approval back into a fresh approval request.
+    if (
+      policyDecision.action === "allow" &&
+      policyDecision.policy !== "approval-granted" &&
+      contextualResult?.action === "require-approval"
+    ) {
+      policyDecision = {
+        ...policyDecision,
+        action: "require-approval",
+        reason: contextualResult.reason,
+        evidence: [
+          contextualResult.reason,
+          `Capability transition: ${contextualResult.capabilityTransition.fromCapability ?? "none"} → ${contextualResult.capabilityTransition.toCapability}`,
+          `Workflow intent: ${contextualResult.workflowContext.intent}`,
+        ],
+        policy: "contextual-engine-approval",
+      };
+    }
 
     if (policyDecision.action === "block") {
       this.emitToolEvent("TOOL_BLOCKED", enrichedCtx, currentRisk, policyDecision);
@@ -296,17 +339,24 @@ export class AdaptiveController {
     riskScore: number,
     contextualResult?: import("./contextual-engine.js").ContextualEvaluationResult
   ): SentinelDecision {
+    // A blocked attack is evidence, not a non-event. Recording it means a
+    // sustained probing campaign escalates the server's posture even though no
+    // individual attempt ever reached an upstream process.
+    const effectiveRisk = policyName === "hard-quarantine"
+      ? riskScore
+      : this.recordBlockedAttempt(serverId, toolId, reason, policyName, riskScore);
+
     const decision: PolicyDecision = {
       action: "block",
       reason,
       evidence: [reason],
       policy: policyName,
-      riskScore,
+      riskScore: effectiveRisk,
       securityState: ctx.securityState === "QUARANTINE" ? "QUARANTINE" : "RESTRICT",
       timestamp: new Date().toISOString(),
       isHardRule: true,
     };
-    this.emitToolEvent("TOOL_BLOCKED", ctx, riskScore, decision);
+    this.emitToolEvent("TOOL_BLOCKED", ctx, effectiveRisk, decision);
 
     if (ctx.workflowId) {
       const toolProf = this.contextualEngine.getToolProfile(ctx.tool);
@@ -356,6 +406,8 @@ export class AdaptiveController {
     driftFindings: BehaviorDriftFinding[];
     stateTransition: { from: SecurityState; to: SecurityState } | null;
     quarantined: boolean;
+    threatSignals: import("./types.js").ThreatSignal[];
+    outputFindings: import("../types/index.js").SecurityFinding[];
   } {
     const server = this.registry.getServer(ctx.serverId) ?? this.registry.getServerByName(ctx.server);
     const serverId = server?.serverId ?? ctx.serverId;
@@ -436,7 +488,7 @@ export class AdaptiveController {
 
       // Emit state transition event
       this.eventBus.emit({
-        id: `evt_${Date.now().toString(36)}`,
+        id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
         type: "STATE_TRANSITION",
         timestamp: new Date().toISOString(),
         serverId,
@@ -485,7 +537,7 @@ export class AdaptiveController {
     // ── Emit drift event if detected ──
     if (driftFindings.length > 0) {
       this.eventBus.emit({
-        id: `evt_${Date.now().toString(36)}`,
+        id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
         type: "BEHAVIOR_DRIFT",
         timestamp: new Date().toISOString(),
         serverId,
@@ -510,7 +562,7 @@ export class AdaptiveController {
     // ── Emit risk change event ──
     if (riskAssessment.delta !== 0) {
       this.eventBus.emit({
-        id: `evt_${Date.now().toString(36)}`,
+        id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
         type: "RISK_CHANGE",
         timestamp: new Date().toISOString(),
         serverId,
@@ -567,7 +619,7 @@ export class AdaptiveController {
     }
 
     // ── Multi-Signal Threat Detection ──
-    this.threatDetector.correlateThreats({
+    const threatSignals = this.threatDetector.correlateThreats({
       identityVerified: true,
       driftFindings,
       outputFindings,
@@ -598,7 +650,136 @@ export class AdaptiveController {
       driftFindings,
       stateTransition,
       quarantined,
+      threatSignals,
+      outputFindings,
     };
+  }
+
+  /**
+   * Feeds a blocked pre-execution attempt into the risk engine and state machine.
+   * Returns the resulting server risk score.
+   */
+  private recordBlockedAttempt(
+    serverId: string,
+    toolId: string,
+    reason: string,
+    policyName: string,
+    fallbackRisk: number,
+  ): number {
+    const server = this.registry.getServer(serverId);
+    if (!server) return fallbackRisk;
+
+    // An authorization denial is a policy working as designed; an injection
+    // attempt or a dangerous capability sequence is an actual attack signal.
+    const isAttackSignal = policyName !== "hard-authorization";
+
+    const assessment = this.riskEngine.assess(serverId, {
+      toolId,
+      serverId,
+      unauthorizedAccess: true,
+      runtimeViolations: isAttackSignal
+        ? [{ severity: "high" as const, message: `Blocked by ${policyName}: ${reason}` }]
+        : undefined,
+      previousIncidents: server.incidentCount,
+    });
+
+    this.registry.updateServerRisk(serverId, assessment.score, assessment.state);
+    const { transition } = this.stateMachine.evaluate(serverId, assessment.score);
+
+    if (transition?.to === "QUARANTINE" && !this.quarantineManager.isQuarantined(serverId)) {
+      this.quarantineManager.quarantine(
+        serverId,
+        `Sustained blocked-attempt activity drove risk to ${assessment.score}`,
+        assessment.score,
+        [reason],
+        "adaptive-controller",
+      );
+    }
+
+    return assessment.score;
+  }
+
+  /**
+   * Folds Semantic Change Firewall findings into the server's risk posture.
+   *
+   * A tool whose advertised contract expanded is a pre-execution integrity
+   * problem: it must move risk before the mutated tool is ever called, which is
+   * the whole point of catching it at `tools/list` time.
+   */
+  recordSemanticChange(
+    serverId: string,
+    toolName: string,
+    diff: import("./types.js").SemanticDiffResult,
+  ): RiskAssessment | null {
+    if (!diff.hasSemanticChange) return null;
+
+    const server = this.registry.getServer(serverId);
+    const tool = this.registry.getToolByName(serverId, toolName);
+    if (tool) this.registry.recordSemanticChanges(tool.toolId, diff.findings);
+
+    const assessment = this.riskEngine.assess(serverId, {
+      toolId: tool?.toolId,
+      serverId,
+      descriptorChanged: true,
+      runtimeViolations: diff.findings.map((f) => ({
+        severity: f.severity,
+        message: `Semantic change: ${f.description}`,
+      })),
+      capabilityMismatch: diff.requiresRevalidation,
+      previousIncidents: server?.incidentCount ?? 0,
+    });
+
+    this.registry.updateServerRisk(serverId, assessment.score, assessment.state);
+    const { transition } = this.stateMachine.evaluate(serverId, assessment.score);
+
+    this.eventBus.emit({
+      id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
+      type: "BEHAVIOR_DRIFT",
+      timestamp: new Date().toISOString(),
+      serverId,
+      serverName: server?.serverName ?? serverId,
+      toolId: tool?.toolId,
+      toolName,
+      riskScore: assessment.score,
+      riskDelta: assessment.delta,
+      securityState: transition?.to ?? assessment.state,
+      previousState: transition?.from,
+      decision: "semantic-change",
+      reasons: diff.findings.map((f) => f.description),
+      evidence: diff.findings.map((f) => `${f.type}: ${JSON.stringify(f.details.updated)}`),
+      policy: "semantic-firewall",
+    });
+
+    process.stderr.write(
+      `[sentinel] Semantic change firewall: ${diff.findings.length} finding(s) on ` +
+      `${server?.serverName ?? serverId}/${toolName}, risk: ${assessment.score}\n`
+    );
+
+    if (assessment.score >= this.config.risk.thresholds.quarantine && !this.quarantineManager.isQuarantined(serverId)) {
+      this.quarantineManager.quarantine(
+        serverId,
+        `Tool contract expanded beyond trusted baseline (risk ${assessment.score})`,
+        assessment.score,
+        diff.findings.map((f) => f.description),
+        "semantic-firewall",
+      );
+    }
+
+    return assessment;
+  }
+
+  /**
+   * Clears all accumulated security state so a scenario can be replayed from a
+   * genuinely clean baseline. Does not affect configuration.
+   */
+  reset(): void {
+    this.registry.clear();
+    this.riskEngine.reset();
+    this.stateMachine.reset();
+    this.eventBus.clear();
+    this.policyEngine.reset();
+    this.contextualEngine.reset();
+    this.maliciousModeServers.clear();
   }
 
   // ── Demo helpers ──
@@ -621,7 +802,7 @@ export class AdaptiveController {
     const result = this.policyEngine.approveRequest(id, decidedBy);
     if (result) {
       this.eventBus.emit({
-        id: `evt_${Date.now().toString(36)}`,
+        id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
         type: "APPROVAL_GRANTED",
         timestamp: new Date().toISOString(),
         serverId: result.serverId,
@@ -644,7 +825,7 @@ export class AdaptiveController {
     const result = this.policyEngine.denyRequest(id, decidedBy);
     if (result) {
       this.eventBus.emit({
-        id: `evt_${Date.now().toString(36)}`,
+        id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
         type: "APPROVAL_DENIED",
         timestamp: new Date().toISOString(),
         serverId: result.serverId,
@@ -774,7 +955,7 @@ export class AdaptiveController {
     decision: PolicyDecision,
   ): void {
     this.eventBus.emit({
-      id: `evt_${Date.now().toString(36)}`,
+      id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
       type,
       timestamp: new Date().toISOString(),
       serverId: ctx.serverId,
@@ -802,7 +983,7 @@ export class AdaptiveController {
     toolName?: string,
   ): void {
     this.eventBus.emit({
-      id: `evt_${Date.now().toString(36)}`,
+      id: `evt_${Date.now().toString(36)}_${(++this.eventSeq).toString(36)}`,
       type,
       timestamp: new Date().toISOString(),
       serverId,
