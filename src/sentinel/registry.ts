@@ -29,6 +29,7 @@ export class ServerRegistry {
   private serversByName: Map<string, string> = new Map();
 
   registerServer(name: string, opts: {
+    serverName?: string;
     version?: string;
     source?: string;
     transport?: "stdio" | "http" | "sse";
@@ -37,6 +38,7 @@ export class ServerRegistry {
     const existing = this.serversByName.get(name);
     if (existing) {
       const server = this.servers.get(existing)!;
+      if (opts.serverName) server.serverName = opts.serverName;
       server.lastSeen = new Date().toISOString();
       return server;
     }
@@ -44,7 +46,7 @@ export class ServerRegistry {
     const serverId = generateId("srv");
     const server: ServerRegistration = {
       serverId,
-      serverName: name,
+      serverName: opts.serverName ?? name,
       version: opts.version ?? "unknown",
       source: opts.source ?? "local",
       transport: opts.transport ?? "stdio",

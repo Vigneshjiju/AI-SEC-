@@ -1,5 +1,5 @@
 {
-  "benchmarkTimestamp": "2026-09-19T10:31:33.798Z",
+  "benchmarkTimestamp": "2026-09-19T10:56:36.450Z",
   "scenarios": [
     {
       "scenario": "A: Raw MCP",
@@ -8,7 +8,7 @@
       "attackDetected": false,
       "attackBlocked": false,
       "attackContained": false,
-      "executionLatencyMs": 0.013,
+      "executionLatencyMs": 0.012,
       "securityOverheadMs": 0,
       "riskScore": 0,
       "securityState": "NONE",
@@ -21,8 +21,8 @@
       "attackDetected": false,
       "attackBlocked": false,
       "attackContained": false,
-      "executionLatencyMs": 1.352,
-      "securityOverheadMs": 0.541,
+      "executionLatencyMs": 1.397,
+      "securityOverheadMs": 0.559,
       "riskScore": 0,
       "securityState": "STATIC_PASS",
       "findingsCount": 0
@@ -34,15 +34,15 @@
       "attackDetected": true,
       "attackBlocked": true,
       "attackContained": true,
-      "executionLatencyMs": 1.168,
-      "securityOverheadMs": 1.118,
+      "executionLatencyMs": 1.082,
+      "securityOverheadMs": 1.032,
       "riskScore": 78,
       "securityState": "QUARANTINE",
       "findingsCount": 11
     }
   ],
   "performanceSummary": {
-    "averageRiskEvaluationMs": 1.118,
+    "averageRiskEvaluationMs": 1.032,
     "quarantineLatencyMs": 0.12,
     "stateTransitionLatencyMs": 0.08,
     "overheadCategory": "sub-millisecond (< 2ms per invocation)"

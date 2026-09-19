@@ -326,6 +326,187 @@ export interface RuntimeEvent {
   allowed: boolean;
 }
 
+// ── Identity & Claims ──
+
+export interface IdentityClaims {
+  userId: string;
+  agentId?: string;
+  token: string;
+  issuer: string;
+  audience: string;
+  roles: string[];
+  scopes: string[];
+  expiresAt: number;
+}
+
+export interface VerifiedIdentity {
+  valid: boolean;
+  claims?: IdentityClaims;
+  error?: string;
+}
+
+// ── Capability Leases ──
+
+export type LeaseState = "ACTIVE" | "EXPIRING" | "EXPIRED" | "REVOKED";
+
+export interface CapabilityLease {
+  leaseId: string;
+  toolId: string;
+  toolName: string;
+  capability: string;
+  scope: string;
+  workflowId: string;
+  userId: string;
+  issuedAt: number;
+  expiresAt: number;
+  state: LeaseState;
+  revokedAt?: number;
+  revocationReason?: string;
+}
+
+// ── Capability Profiles & Transition Analysis ──
+
+export type CapabilityType = 
+  | "READ"
+  | "EXTERNAL_LOOKUP"
+  | "WRITE"
+  | "SECRET_ACCESS"
+  | "DATA_TRANSFER"
+  | "INFRASTRUCTURE_CONTROL"
+  | "EXEC"
+  | "UNKNOWN";
+
+export interface ToolCapabilityProfile {
+  toolName: string;
+  primaryCapability: CapabilityType;
+  riskTier: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  requiresApproval: boolean;
+  allowedNextCapabilities: CapabilityType[];
+}
+
+export interface CapabilityTransitionResult {
+  allowed: boolean;
+  fromCapability?: CapabilityType;
+  toCapability: CapabilityType;
+  riskIncrement: number;
+  isDangerousSequence: boolean;
+  reason?: string;
+}
+
+// ── Data-Flow & Sensitivity ──
+
+export type DataClassification = "PUBLIC" | "INTERNAL" | "CONFIDENTIAL" | "SECRET" | "CRITICAL";
+
+export interface DataTaint {
+  originTool: string;
+  originResource: string;
+  classification: DataClassification;
+  timestamp: number;
+  snippetPreview?: string;
+}
+
+export interface DataFlowCheckResult {
+  allowed: boolean;
+  violation?: {
+    sourceClassification: DataClassification;
+    targetCapability: CapabilityType;
+    targetDestination?: string;
+    reason: string;
+  };
+}
+
+// ── Semantic Change Firewall ──
+
+export interface SemanticChangeFinding {
+  type: "CAPABILITY_EXPANSION" | "PERMISSION_EXPANSION" | "SENSITIVITY_INCREASE" | "NEW_RESOURCE_ACCESS" | "NEW_NETWORK_CAPABILITY" | "NEW_DATA_ACCESS";
+  severity: "low" | "medium" | "high" | "critical";
+  description: string;
+  details: {
+    field: string;
+    previous: unknown;
+    updated: unknown;
+  };
+}
+
+export interface SemanticDiffResult {
+  hasSemanticChange: boolean;
+  requiresRevalidation: boolean;
+  findings: SemanticChangeFinding[];
+  riskScoreIncrement: number;
+}
+
+// ── Workflow Context & History ──
+
+export interface ToolCallRecord {
+  toolId: string;
+  toolName: string;
+  server: string;
+  capability: CapabilityType;
+  args: unknown;
+  timestamp: number;
+  decision: "allow" | "block" | "require-approval";
+  riskScore: number;
+}
+
+export interface WorkflowExecutionContext {
+  workflowId: string;
+  userId: string;
+  agentId: string;
+  intent: string;
+  toolCallHistory: ToolCallRecord[];
+  capabilityHistory: CapabilityType[];
+  resourcesAccessed: Set<string>;
+  dataSensitivity: DataClassification;
+  activeLeases: Set<string>;
+  riskScore: number;
+  securityState: SecurityState;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ── Multi-Signal Threat Detection ──
+
+export type ThreatType = 
+  | "TOOL_POISONING"
+  | "TOOL_DEFINITION_MODIFICATION"
+  | "PRIVILEGE_ESCALATION"
+  | "CREDENTIAL_ACCESS"
+  | "DATA_EXFILTRATION"
+  | "WORKFLOW_ABUSE_SEQUENCE"
+  | "PROMPT_INJECTION"
+  | "ABNORMAL_BEHAVIOR"
+  | "UNAUTHORIZED_RESOURCE_ACCESS";
+
+export interface ThreatSignal {
+  threatType: ThreatType;
+  severity: "low" | "medium" | "high" | "critical";
+  source: "identity" | "integrity" | "semantic" | "context" | "transition" | "behavior" | "dataflow" | "input" | "output";
+  confidence: number;
+  message: string;
+  evidence: unknown;
+  timestamp: string;
+}
+
+// ── Verifiable Decision Receipts ──
+
+export interface DecisionReceipt {
+  receiptId: string;
+  workflowId: string;
+  tool: string;
+  toolId: string;
+  server: string;
+  decision: "ALLOW" | "MONITOR" | "RESTRICT" | "REQUIRE_APPROVAL" | "QUARANTINE" | "BLOCK";
+  riskScore: number;
+  state: SecurityState;
+  reasons: string[];
+  evidence: string[];
+  previousTools: string[];
+  capabilityTransitions: { from?: CapabilityType; to: CapabilityType }[];
+  activeLeaseId?: string;
+  timestamp: string;
+  hash: string;
+}
+
 // ── Sentinel Tool Call Context (extends existing ToolCallContext) ──
 
 export interface SentinelToolContext {
@@ -338,9 +519,15 @@ export interface SentinelToolContext {
   userRole: string;
   riskScore: number;
   securityState: SecurityState;
+  workflowId?: string;
+  agentId?: string;
+  intent?: string;
+  authToken?: string;
+  leaseId?: string;
   annotations?: {
     readOnlyHint?: boolean;
     destructiveHint?: boolean;
     idempotentHint?: boolean;
   };
 }
+

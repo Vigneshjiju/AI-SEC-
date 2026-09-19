@@ -29,6 +29,15 @@ import { QuarantineManager } from "./quarantine.js";
 import { OutputScanner } from "./output-scanner.js";
 import { SentinelEventBus } from "./events.js";
 import { AuthManager } from "./auth.js";
+import { IdentityVerifier } from "./identity.js";
+import { SemanticChangeFirewall } from "./semantic-firewall.js";
+import { CapabilityLeaseManager } from "./lease-manager.js";
+import { ContextualSecurityEngine } from "./contextual-engine.js";
+import { DataFlowGuard } from "./data-flow.js";
+import { InputValidator } from "./input-validator.js";
+import { OutputValidator } from "./output-scanner.js";
+import { ThreatDetector } from "./threat-detector.js";
+import { DecisionReceiptsLedger } from "./receipts.js";
 
 export interface SentinelDecision {
   action: "allow" | "block" | "require-approval";
@@ -50,8 +59,17 @@ export class AdaptiveController {
   readonly runtimeGuard: RuntimeGuard;
   readonly quarantineManager: QuarantineManager;
   readonly outputScanner: OutputScanner;
+  readonly outputValidator: OutputValidator;
   readonly eventBus: SentinelEventBus;
   readonly authManager: AuthManager;
+  readonly identityVerifier: IdentityVerifier;
+  readonly semanticFirewall: SemanticChangeFirewall;
+  readonly leaseManager: CapabilityLeaseManager;
+  readonly contextualEngine: ContextualSecurityEngine;
+  readonly dataFlowGuard: DataFlowGuard;
+  readonly inputValidator: InputValidator;
+  readonly threatDetector: ThreatDetector;
+  readonly receiptsLedger: DecisionReceiptsLedger;
 
   private maliciousModeServers: Set<string> = new Set();
 
@@ -66,7 +84,16 @@ export class AdaptiveController {
     this.runtimeGuard = new RuntimeGuard(this.config);
     this.quarantineManager = new QuarantineManager(this.registry, this.stateMachine, this.eventBus);
     this.outputScanner = new OutputScanner();
+    this.outputValidator = new OutputValidator();
     this.authManager = new AuthManager(this.config.auth.mode, this.config.auth.defaultRole);
+    this.identityVerifier = new IdentityVerifier();
+    this.semanticFirewall = new SemanticChangeFirewall();
+    this.leaseManager = new CapabilityLeaseManager(this.eventBus);
+    this.contextualEngine = new ContextualSecurityEngine();
+    this.dataFlowGuard = new DataFlowGuard();
+    this.inputValidator = new InputValidator();
+    this.threatDetector = new ThreatDetector();
+    this.receiptsLedger = new DecisionReceiptsLedger();
   }
 
   /**
@@ -76,44 +103,136 @@ export class AdaptiveController {
   preExecute(ctx: SentinelToolContext): SentinelDecision {
     const server = this.registry.getServer(ctx.serverId) ?? this.registry.getServerByName(ctx.server);
     const serverId = server?.serverId ?? ctx.serverId;
+    const tool = (ctx.toolId ? this.registry.getTool(ctx.toolId) : undefined)
+      ?? this.registry.getToolByName(serverId, ctx.tool)
+      ?? this.registry.getToolByPrefixedName(`${ctx.server}__${ctx.tool}`);
+    const toolId = tool?.toolId ?? ctx.toolId;
 
-    // ── Check quarantine (hard rule) ──
-    if (ctx.securityState === "QUARANTINE" || (server && this.quarantineManager.isQuarantined(serverId))) {
-      const riskScore = server?.currentRisk ?? ctx.riskScore ?? 100;
-      const decision: PolicyDecision = {
-        action: "block",
-        reason: `Server "${ctx.server}" is quarantined`,
-        evidence: [server?.quarantineStatus?.reason ?? "Server quarantined"],
-        policy: "hard-quarantine",
-        riskScore,
-        securityState: "QUARANTINE",
-        timestamp: new Date().toISOString(),
-        isHardRule: true,
-      };
-      this.emitToolEvent("TOOL_BLOCKED", ctx, riskScore, decision);
-      return {
-        action: "block",
-        reason: decision.reason,
-        policyDecision: decision,
-        riskAssessment: null,
-        driftFindings: [],
-        securityState: "QUARANTINE",
-      };
+    // ── 1. Identity Verifier (Never trust unverified roles) ──
+    let verifiedRole = ctx.userRole;
+    if (ctx.authToken) {
+      const idResult = this.identityVerifier.enforceVerifiedRole(ctx.authToken, ctx.userRole, ctx.userId);
+      if (!idResult.verified) {
+        return this.createBlockDecision(
+          ctx,
+          `Identity verification failed: ${idResult.reason}`,
+          "identity-verifier",
+          serverId,
+          toolId,
+          90
+        );
+      }
+      verifiedRole = idResult.primaryRole;
     }
 
-    // ── Get current state ──
+    // ── 2. Check quarantine (hard rule) ──
+    if (ctx.securityState === "QUARANTINE" || (server && this.quarantineManager.isQuarantined(serverId))) {
+      const riskScore = server?.currentRisk ?? ctx.riskScore ?? 100;
+      return this.createBlockDecision(
+        ctx,
+        `Server "${ctx.server}" is quarantined`,
+        "hard-quarantine",
+        serverId,
+        toolId,
+        riskScore
+      );
+    }
+
+    // ── 3. Input Validation (SSRF, Traversal, Command Injection) ──
+    const inputValidation = this.inputValidator.validate(ctx.tool, ctx.args);
+    if (!inputValidation.valid) {
+      const reason = inputValidation.violations.map((v) => v.message).join("; ");
+      return this.createBlockDecision(
+        ctx,
+        `Hostile input rejected: ${reason}`,
+        "input-validator",
+        serverId,
+        toolId,
+        85
+      );
+    }
+
+    // ── 4. Capability Lease Validation ──
+    if (ctx.leaseId) {
+      const toolProf = this.contextualEngine.getToolProfile(ctx.tool);
+      const leaseValidation = this.leaseManager.validateLease({
+        leaseId: ctx.leaseId,
+        toolId,
+        capability: toolProf.primaryCapability,
+        workflowId: ctx.workflowId,
+      });
+      if (!leaseValidation.valid) {
+        return this.createBlockDecision(
+          ctx,
+          `Capability lease rejected: ${leaseValidation.reason}`,
+          "lease-manager",
+          serverId,
+          toolId,
+          75
+        );
+      }
+    }
+
+    // ── 5. Contextual Tool-Call Engine & Capability Transition Analysis ──
+    if (ctx.workflowId) {
+      const contextualResult = this.contextualEngine.evaluateToolCall({
+        workflowId: ctx.workflowId,
+        userId: ctx.userId,
+        agentId: ctx.agentId,
+        intent: ctx.intent,
+        server: ctx.server,
+        tool: ctx.tool,
+        toolId,
+        args: ctx.args,
+      });
+
+      if (contextualResult.action === "block") {
+        return this.createBlockDecision(
+          ctx,
+          contextualResult.reason,
+          "contextual-engine",
+          serverId,
+          toolId,
+          Math.max(server?.currentRisk ?? 0, 80),
+          contextualResult
+        );
+      }
+    }
+
+    // ── 6. Data-Flow Guard ──
+    if (ctx.workflowId) {
+      const toolProf = this.contextualEngine.getToolProfile(ctx.tool);
+      const dataFlowResult = this.dataFlowGuard.checkDataFlow({
+        workflowId: ctx.workflowId,
+        toolName: ctx.tool,
+        capability: toolProf.primaryCapability,
+        args: ctx.args,
+      });
+
+      if (!dataFlowResult.allowed && dataFlowResult.violation) {
+        return this.createBlockDecision(
+          ctx,
+          dataFlowResult.violation.reason,
+          "data-flow-guard",
+          serverId,
+          toolId,
+          85
+        );
+      }
+    }
+
+    // ── 7. Get current state & apply policy engine ──
     const currentState = server ? this.stateMachine.getState(serverId) : "NORMAL";
     const currentRisk = server?.currentRisk ?? 0;
 
-    // ── Build enriched context ──
     const enrichedCtx: SentinelToolContext = {
       ...ctx,
+      userRole: verifiedRole,
       serverId,
       riskScore: currentRisk,
       securityState: currentState,
     };
 
-    // ── Apply policy ──
     const policyDecision = this.policyEngine.evaluate(enrichedCtx);
 
     if (policyDecision.action === "block") {
@@ -165,6 +284,61 @@ export class AdaptiveController {
       riskAssessment: null,
       driftFindings: [],
       securityState: currentState,
+    };
+  }
+
+  private createBlockDecision(
+    ctx: SentinelToolContext,
+    reason: string,
+    policyName: string,
+    serverId: string,
+    toolId: string,
+    riskScore: number,
+    contextualResult?: import("./contextual-engine.js").ContextualEvaluationResult
+  ): SentinelDecision {
+    const decision: PolicyDecision = {
+      action: "block",
+      reason,
+      evidence: [reason],
+      policy: policyName,
+      riskScore,
+      securityState: ctx.securityState === "QUARANTINE" ? "QUARANTINE" : "RESTRICT",
+      timestamp: new Date().toISOString(),
+      isHardRule: true,
+    };
+    this.emitToolEvent("TOOL_BLOCKED", ctx, riskScore, decision);
+
+    if (ctx.workflowId) {
+      const toolProf = this.contextualEngine.getToolProfile(ctx.tool);
+      this.receiptsLedger.recordReceiptSync({
+        workflowId: ctx.workflowId,
+        tool: ctx.tool,
+        toolId,
+        server: ctx.server,
+        decision: "BLOCK",
+        riskScore,
+        state: decision.securityState,
+        reasons: [reason],
+        evidence: contextualResult?.isDangerousSequence
+          ? [JSON.stringify(contextualResult.capabilityTransition)]
+          : [reason],
+        previousTools: contextualResult?.workflowContext
+          ? contextualResult.workflowContext.toolCallHistory.map((t) => t.toolName)
+          : [],
+        capabilityTransitions: contextualResult?.capabilityTransition
+          ? [{ from: contextualResult.capabilityTransition.fromCapability, to: contextualResult.capabilityTransition.toCapability }]
+          : [{ to: toolProf.primaryCapability }],
+        activeLeaseId: ctx.leaseId,
+      });
+    }
+
+    return {
+      action: "block",
+      reason,
+      policyDecision: decision,
+      riskAssessment: null,
+      driftFindings: [],
+      securityState: decision.securityState,
     };
   }
 
@@ -349,6 +523,73 @@ export class AdaptiveController {
         reasons: riskAssessment.reasons,
         evidence: [],
         policy: "risk-engine",
+      });
+    }
+
+    // ── Unconditional Quarantine Check on critical score ──
+    if (riskAssessment.score >= this.config.risk.thresholds.quarantine && !this.quarantineManager.isQuarantined(serverId)) {
+      this.quarantineManager.quarantine(
+        serverId,
+        `Risk score ${riskAssessment.score} exceeded quarantine threshold`,
+        riskAssessment.score,
+        riskAssessment.reasons,
+        "adaptive-controller",
+      );
+      quarantined = true;
+    }
+
+    // ── Capability Lease Auto-Revocation on Critical Risk ──
+    if (quarantined || riskAssessment.score >= this.config.risk.thresholds.quarantine) {
+      this.leaseManager.onRiskEscalation(toolId, ctx.workflowId, riskAssessment.score);
+    }
+
+    // ── Data-Flow Guard Taint Recording ──
+    if (ctx.workflowId) {
+      this.dataFlowGuard.recordTaint({
+        workflowId: ctx.workflowId,
+        originTool: ctx.tool,
+        originResource: server?.serverName ?? ctx.server,
+        outputText,
+      });
+    }
+
+    // ── Contextual Tool-Call Engine Record ──
+    if (ctx.workflowId) {
+      this.contextualEngine.recordCall(
+        ctx.workflowId,
+        toolId,
+        ctx.tool,
+        ctx.server,
+        ctx.args,
+        quarantined ? "block" : "allow",
+        riskAssessment.score
+      );
+    }
+
+    // ── Multi-Signal Threat Detection ──
+    this.threatDetector.correlateThreats({
+      identityVerified: true,
+      driftFindings,
+      outputFindings,
+      descriptorChanged: evidence.descriptorChanged,
+    });
+
+    // ── Verifiable Decision Receipt Record ──
+    if (ctx.workflowId) {
+      const toolProf = this.contextualEngine.getToolProfile(ctx.tool);
+      this.receiptsLedger.recordReceiptSync({
+        workflowId: ctx.workflowId,
+        tool: ctx.tool,
+        toolId,
+        server: ctx.server,
+        decision: quarantined ? "QUARANTINE" : (riskAssessment.state === "RESTRICT" ? "RESTRICT" : "ALLOW"),
+        riskScore: riskAssessment.score,
+        state: riskAssessment.state,
+        reasons: riskAssessment.reasons.length > 0 ? riskAssessment.reasons : ["Tool executed within normal baseline"],
+        evidence: driftFindings.map((f) => f.message),
+        previousTools: (this.contextualEngine.getOrCreateWorkflowContext(ctx.workflowId, ctx.userId).toolCallHistory || []).map((t) => t.toolName),
+        capabilityTransitions: [{ to: toolProf.primaryCapability }],
+        activeLeaseId: ctx.leaseId,
       });
     }
 
@@ -625,4 +866,16 @@ export class AdaptiveController {
   isServerMaliciousMode(serverName: string): boolean {
     return this.maliciousModeServers.has(serverName);
   }
+
+  getIdentityVerifier(): IdentityVerifier { return this.identityVerifier; }
+  getSemanticFirewall(): SemanticChangeFirewall { return this.semanticFirewall; }
+  getLeaseManager(): CapabilityLeaseManager { return this.leaseManager; }
+  getContextualEngine(): ContextualSecurityEngine { return this.contextualEngine; }
+  getDataFlowGuard(): DataFlowGuard { return this.dataFlowGuard; }
+  getInputValidator(): InputValidator { return this.inputValidator; }
+  getOutputValidator(): OutputValidator { return this.outputValidator; }
+  getThreatDetector(): ThreatDetector { return this.threatDetector; }
+  getReceiptsLedger(): DecisionReceiptsLedger { return this.receiptsLedger; }
+  getQuarantineManager(): QuarantineManager { return this.quarantineManager; }
 }
+

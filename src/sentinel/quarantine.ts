@@ -77,13 +77,14 @@ export class QuarantineManager {
   /**
    * Controlled recovery. Never returns to NORMAL — always MONITOR.
    */
-  recover(serverId: string, approvedBy: string): boolean {
+  recover(serverId: string, approvedBy: string, reason?: string): boolean {
     const server = this.registry.getServer(serverId);
     if (!server || !this.registry.isQuarantined(serverId)) return false;
 
     this.registry.recoverServer(serverId, approvedBy);
     this.stateMachine.forceTransition(serverId, "MONITOR",
-      `Recovered from quarantine by ${approvedBy}`, server.currentRisk);
+      reason ? `${reason} (Approved by ${approvedBy})` : `Recovered from quarantine by ${approvedBy}`,
+      server.currentRisk);
 
     // Emit event
     this.eventBus.emit({

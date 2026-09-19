@@ -90,3 +90,24 @@ export class OutputScanner {
     return findings;
   }
 }
+
+/**
+ * Output Validator: validates MCP tool output as untrusted data,
+ * preventing context-injection and data leakage from influencing downstream steps.
+ */
+export class OutputValidator extends OutputScanner {
+  validateOutput(outputText: string): {
+    valid: boolean;
+    findings: SecurityFinding[];
+    hasCriticalViolation: boolean;
+  } {
+    const findings = this.scan(outputText);
+    const hasCriticalViolation = findings.some((f) => f.severity === "critical");
+    return {
+      valid: !hasCriticalViolation,
+      findings,
+      hasCriticalViolation,
+    };
+  }
+}
+

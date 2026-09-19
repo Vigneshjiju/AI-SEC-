@@ -14,6 +14,7 @@ export interface DashboardOptions {
     rateLimits: Array<{ tool: string; count: number; limit: number }>;
   };
   getSentinel?: () => AdaptiveController | null;
+  sentinel?: AdaptiveController | null;
 }
 
 function parseBody(req: IncomingMessage): Promise<any> {
@@ -65,7 +66,7 @@ export async function startDashboard(opts: DashboardOptions): Promise<void> {
       return;
     }
 
-    const sentinel = opts.getSentinel ? opts.getSentinel() : null;
+    const sentinel = opts.sentinel ?? (opts.getSentinel ? opts.getSentinel() : null);
 
     // ── Existing Status Endpoint (Preserved + Extended) ──
     if (url.pathname === "/api/status") {
@@ -172,6 +173,26 @@ export async function startDashboard(opts: DashboardOptions): Promise<void> {
         return;
       }
       sendJson(res, 200, sentinel.policyEngine.getPendingApprovals());
+      return;
+    }
+
+    // ── Sentinel Decision Receipts Ledger ──
+    if (url.pathname === "/api/sentinel/receipts" || url.pathname === "/api/receipts") {
+      if (!sentinel) {
+        sendJson(res, 200, []);
+        return;
+      }
+      sendJson(res, 200, sentinel.getReceiptsLedger().getAllReceipts());
+      return;
+    }
+
+    // ── Sentinel Active Capability Leases ──
+    if (url.pathname === "/api/sentinel/leases" || url.pathname === "/api/leases") {
+      if (!sentinel) {
+        sendJson(res, 200, []);
+        return;
+      }
+      sendJson(res, 200, sentinel.getLeaseManager().getActiveLeases());
       return;
     }
 

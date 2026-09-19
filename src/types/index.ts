@@ -41,7 +41,7 @@ export interface SecurityPolicy {
   blockOnCritical: boolean;
   blockOnHigh: boolean;
   scanDescriptions: boolean;
-  scanInputs: boolean;
+  scanInputs?: boolean;
   descriptorBaselinePath?: string;
   descriptorChangeAction?: "warn" | "block";
 }
